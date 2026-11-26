@@ -446,7 +446,14 @@ func runIssue(args []string) error {
 			fmt.Println("\nActivity:")
 			for _, a := range d.Activities {
 				line := a.Action
-				if a.Field != "" {
+				switch {
+				case a.Field == "checklist":
+					line = a.NewValue
+				case a.Field == "link" && a.NewValue != "":
+					line = "linked: " + strings.ReplaceAll(a.NewValue, "_", " ")
+				case a.Field == "link":
+					line = "removed the link to " + a.OldValue
+				case a.Field != "":
 					line = fmt.Sprintf("%s: %s → %s", a.Field, valueOrDash(a.OldValue), valueOrDash(a.NewValue))
 				}
 				fmt.Printf("  %s @%s%s %s\n", a.CreatedAt.Format("2006-01-02 15:04"), a.ActorName, viaSuffix(a.Via), line)

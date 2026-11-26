@@ -75,7 +75,9 @@ func handleRequest(req rpcRequest, api *client.Client) rpcResponse {
 			Result: map[string]any{
 				"protocolVersion": "2024-11-05",
 				"capabilities": map[string]any{
-					"tools": map[string]any{},
+					"tools":     map[string]any{},
+					"resources": map[string]any{},
+					"prompts":   map[string]any{},
 				},
 				"serverInfo": map[string]any{
 					"name":    "velo-mcp",
@@ -85,6 +87,43 @@ func handleRequest(req rpcRequest, api *client.Client) rpcResponse {
 		}
 	case "ping":
 		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{}}
+	case "resources/list":
+		list, err := listResources(api)
+		if err != nil {
+			return rpcErr(req, -32603, err.Error())
+		}
+		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"resources": list}}
+	case "resources/templates/list":
+		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"resourceTemplates": resourceTemplates()}}
+	case "resources/read":
+		var p struct {
+			URI string `json:"uri"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil || p.URI == "" {
+			return rpcErr(req, -32602, "resources/read needs a uri")
+		}
+		text, err := readResource(api, p.URI)
+		if err != nil {
+			return rpcErr(req, -32002, err.Error()) // MCP: resource not found
+		}
+		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
+			"contents": []map[string]any{{"uri": p.URI, "mimeType": "text/markdown", "text": text}},
+		}}
+	case "prompts/list":
+		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"prompts": promptList()}}
+	case "prompts/get":
+		var p struct {
+			Name      string            `json:"name"`
+			Arguments map[string]string `json:"arguments"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return rpcErr(req, -32602, "invalid prompts/get params")
+		}
+		result, err := getPrompt(api, p.Name, p.Arguments)
+		if err != nil {
+			return rpcErr(req, -32602, err.Error())
+		}
+		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: result}
 	case "tools/list":
 		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"tools": toolDefinitions()}}
 	case "tools/call":
@@ -622,4 +661,8 @@ func toolDefinitions() []map[string]any {
 			},
 		},
 	}
+}
+
+func rpcErr(req rpcRequest, code int, msg string) rpcResponse {
+	return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: code, Message: msg}}
 }

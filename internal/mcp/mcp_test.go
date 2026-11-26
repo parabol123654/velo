@@ -235,3 +235,70 @@ func TestMCPCheckItem(t *testing.T) {
 		t.Fatal("unknown item should fail")
 	}
 }
+
+func TestMCPResourcesAndPrompts(t *testing.T) {
+	api, st := newMCPTestAPI(t, "Add login", "Write docs")
+	users, _ := st.ListUsers()
+	st.CreateCycle(mustProjectID(t, st, "VELO"), "Sprint 1", "", "", "", "active")
+	cyc := "Sprint 1"
+	st.UpdateIssue(users[0].ID, "VELO-1", db.UpdateIssueInput{CycleID: &cyc})
+	st.LinkIssues(users[0].ID, "VELO-1", "blocks", "VELO-2")
+	st.AddComment(users[0].ID, "VELO-1", "Started on this")
+
+	requests := []string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"resources/list"}`,
+		`{"jsonrpc":"2.0","id":3,"method":"resources/templates/list"}`,
+		`{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"velo://issue/VELO-1"}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"resources/read","params":{"uri":"velo://project/VELO"}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"resources/read","params":{"uri":"velo://issue/VELO-99"}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"prompts/list"}`,
+		`{"jsonrpc":"2.0","id":8,"method":"prompts/get","params":{"name":"work_on_issue","arguments":{"ref":"VELO-1"}}}`,
+		`{"jsonrpc":"2.0","id":9,"method":"prompts/get","params":{"name":"split_issue","arguments":{"ref":"VELO-2"}}}`,
+		`{"jsonrpc":"2.0","id":10,"method":"prompts/get","params":{"name":"summarize_cycle","arguments":{"project":"VELO","cycle":"Sprint 1"}}}`,
+		`{"jsonrpc":"2.0","id":11,"method":"prompts/get","params":{"name":"work_on_issue","arguments":{}}}`,
+	}
+	var out bytes.Buffer
+	if err := ServeStdio(strings.NewReader(strings.Join(requests, "\n")+"\n"), &out, api); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != len(requests) {
+		t.Fatalf("got %d responses for %d requests", len(lines), len(requests))
+	}
+	want := []string{
+		`"resources":{}`,                   // initialize advertises resources
+		`velo://project/VELO`,              // resources/list
+		`velo://issue/{identifier}`,        // templates
+		`# VELO-1: Add login`,              // issue resource
+		`In Progress (started)`,            // project resource lists states
+		`"code":-32002`,                    // unknown issue
+		`"name":"summarize_cycle"`,         // prompts/list
+		`Call claim_issue with ref VELO-1`, // work_on_issue
+		`parent VELO-2`,                    // split_issue
+		`VELO-1 [Todo] Add login`,          // summarize_cycle lists the cycle's issue
+		`argument \"ref\" is required`,     // missing argument
+	}
+	for i, w := range want {
+		if !strings.Contains(lines[i], w) {
+			t.Fatalf("response %d lacks %q:\n%s", i+1, w, lines[i])
+		}
+	}
+	for _, w := range []string{"blocks VELO-2", "Started on this", "Cycle: Sprint 1"} {
+		if !strings.Contains(lines[3], w) {
+			t.Fatalf("issue resource lacks %q:\n%s", w, lines[3])
+		}
+	}
+	if strings.Contains(lines[9], "VELO-2") {
+		t.Fatalf("cycle summary includes an issue outside the cycle:\n%s", lines[9])
+	}
+}
+
+func mustProjectID(t *testing.T, st *db.Store, key string) string {
+	t.Helper()
+	p, err := st.GetProject(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p.ID
+}

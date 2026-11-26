@@ -80,9 +80,11 @@ Create an API token in Settings, then:
 }
 ```
 
-Tools: `list_projects`, `get_project`, `list_users`, `list_issues`, `get_issue`, `create_issue`, `update_issue`, `delete_issue`, `add_comment`, `search_issues`, `create_label`, `create_cycle`, `export_project`.
+Tools: `list_projects`, `get_project`, `list_users`, `list_issues`, `get_issue`, `create_issue`, `update_issue`, `delete_issue`, `next_issue`, `claim_issue`, `check_item`, `link_issues`, `unlink_issues`, `add_comment`, `search_issues`, `create_label`, `create_cycle`, `export_project`.
 
 Assignees can be given as an email or `me`, cycles and labels by name, parents by identifier (`DEV-1`).
+
+It also serves resources (`velo://issue/DEV-12`, `velo://project/DEV`) and prompts: `work_on_issue`, `split_issue`, `summarize_cycle`. A typical agent loop: `next_issue` → `claim_issue` → work → `check_item` for each acceptance criterion → `add_comment` → `update_issue` to In Review. Give each agent its own API token (Settings), limited to the projects it works on; its changes show "via <token name>".
 
 Changes made through MCP or the CLI go through the same HTTP API as the web UI, so open boards update immediately.
 
