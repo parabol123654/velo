@@ -224,6 +224,8 @@ func (s *Server) routes() {
 	// Issues, Search, Comments, Activities & Attachments
 	s.mux.HandleFunc("GET /api/search", s.requireAuth(filtered, s.handleSearch))
 	s.mux.HandleFunc("GET /api/issues", s.requireAuth(filtered, s.handleListIssues))
+	s.mux.HandleFunc("GET /api/issues/next", s.requireAuth(filtered, s.handleNextIssue))
+	s.mux.HandleFunc("POST /api/issues/{ref}/claim", s.requireAuth(s.inProject("issue"), s.handleClaimIssue))
 	s.mux.HandleFunc("POST /api/issues", s.requireAuth(filtered, s.handleCreateIssue))
 	s.mux.HandleFunc("GET /api/issues/{ref}", s.requireAuth(s.inProject("issue"), s.handleGetIssue))
 	s.mux.HandleFunc("PATCH /api/issues/{ref}", s.requireAuth(s.inProject("issue"), s.handleUpdateIssue))
@@ -1221,4 +1223,28 @@ func (s *Server) publishIssues(ids ...string) {
 func (s *Server) publishBlocked(issueID string) {
 	ids, _ := s.store.BlockedIssueIDs(issueID)
 	s.publishIssues(ids...)
+}
+
+// handleNextIssue answers with the next issue to start, or null.
+func (s *Server) handleNextIssue(w http.ResponseWriter, r *http.Request) {
+	iss, err := s.store.NextIssue(db.IssueFilter{
+		ProjectRef: r.URL.Query().Get("project"),
+		LabelID:    r.URL.Query().Get("label"),
+		ProjectIDs: allowedProjects(r),
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, iss)
+}
+
+func (s *Server) handleClaimIssue(w http.ResponseWriter, r *http.Request) {
+	iss, err := s.storeFor(r).ClaimIssue(currentUser(r).ID, r.PathValue("ref"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.Broadcast("issue.updated", iss.ProjectID, iss)
+	writeJSON(w, http.StatusOK, iss)
 }

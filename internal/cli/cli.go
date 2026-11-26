@@ -79,6 +79,8 @@ Usage:
   velo issue show <KEY-N>                       Show issue details, sub-issues, comments & activity
   velo issue create --project KEY --title ...   Create a new issue (--parent for a sub-issue)
   velo issue update <KEY-N> [--state ...]       Update state, priority, title, desc, assignee, cycle, parent, labels
+  velo issue next [--project KEY] [--label L]   Show the next unstarted, unassigned, unblocked issue
+  velo issue claim <KEY-N>                      Assign to yourself and move to In Progress
   velo issue delete <KEY-N>                     Delete an issue
   velo issue link <KEY-N> blocks <KEY-M>        Link issues (blocks, blocked_by, relates, duplicates, duplicated_by)
   velo issue unlink <KEY-N> <KEY-M>             Remove links between two issues
@@ -532,6 +534,43 @@ func runIssue(args []string) error {
 			return err
 		}
 		fmt.Printf("Updated %s -> State: %s | Priority: %s | Assignee: %s\n", iss.Identifier, iss.StateName, priorityName(iss.Priority), valueOrDash(iss.AssigneeName))
+		return nil
+
+	case "next":
+		fs := flag.NewFlagSet("issue next", flag.ContinueOnError)
+		project := fs.String("project", "", "Project key")
+		label := fs.String("label", "", "Label name, e.g. agent")
+		u := fs.String("url", "", "Velo server URL")
+		tok := fs.String("token", "", "API token")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		iss, err := newAPIClient(*u, *tok).NextIssue(*project, *label)
+		if err != nil {
+			return err
+		}
+		if iss == nil {
+			fmt.Println("No issue is waiting.")
+			return nil
+		}
+		fmt.Printf("%s [%s, %s] %s\n", iss.Identifier, iss.StateName, priorityName(iss.Priority), iss.Title)
+		return nil
+
+	case "claim":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: velo issue claim <KEY-N>")
+		}
+		fs := flag.NewFlagSet("issue claim", flag.ContinueOnError)
+		u := fs.String("url", "", "Velo server URL")
+		tok := fs.String("token", "", "API token")
+		if err := fs.Parse(args[2:]); err != nil {
+			return err
+		}
+		iss, err := newAPIClient(*u, *tok).ClaimIssue(args[1])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Claimed %s -> %s, assigned to %s\n", iss.Identifier, iss.StateName, iss.AssigneeName)
 		return nil
 
 	case "link":

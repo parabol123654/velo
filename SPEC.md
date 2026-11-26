@@ -26,6 +26,7 @@ These hold for every change. Breaking one needs an explicit decision, recorded h
 | Workflow state | Per project, any name, but each belongs to one category: `backlog`, `unstarted`, `started`, `completed`, `canceled`. New projects get Backlog, Todo, In Progress, In Review, Done, Canceled. |
 | Issue | `KEY-N` identifier, optional parent (sub-issues; deleting a parent detaches its children), Markdown description, priority 0–4 (none, low, medium, high, urgent), optional assignee and cycle, labels. |
 | Issue link | Between two issues of the same project: `blocks`, `relates` (symmetric) or `duplicates`. The API also takes `blocked_by` and `duplicated_by` and stores the reversed form. An issue's `blocked_by_count` counts blockers not yet completed or canceled; finishing, reopening or deleting a blocker pushes `issue.updated` for the issues it blocks. Unlinking removes every link between the pair. |
+| Picking up work | `next` returns the issue to start: state category `unstarted`, unassigned, not blocked; highest priority first with "no priority" last, then board order. Optional project and label filters. `claim` assigns it to the caller and moves it to the project's first `started` state; it fails with 409 if someone else holds it, it is finished, or it is blocked. Claims are serialized in the server process, so concurrent claimants cannot both win. |
 | Ordering | `position REAL`. A drop between two cards takes the midpoint, so a move updates one row. |
 | Cycle | Optional sprint with dates and status `upcoming`, `active`, `completed`. |
 | Comment, activity, attachment | Comments are Markdown. Activities log field changes. Pasted images go to `uploads/` and are served only to signed-in users. |
@@ -75,7 +76,7 @@ Each event belongs to a project (user events to none); a project-restricted toke
 ## Integrations
 
 - **CLI:** `velo serve | login | project | issue | label | cycle | user | search | mcp | version`. `VELO_URL` and `VELO_TOKEN` override the saved config.
-- **MCP (stdio):** tools `list_projects`, `get_project`, `list_users`, `list_issues`, `get_issue`, `create_issue`, `update_issue`, `delete_issue`, `link_issues`, `unlink_issues`, `add_comment`, `search_issues`, `create_label`, `create_cycle`, `export_project`.
+- **MCP (stdio):** tools `list_projects`, `get_project`, `list_users`, `list_issues`, `get_issue`, `create_issue`, `update_issue`, `delete_issue`, `next_issue`, `claim_issue`, `link_issues`, `unlink_issues`, `add_comment`, `search_issues`, `create_label`, `create_cycle`, `export_project`.
 - **Friendly references:** wherever the API takes an assignee it also accepts an email or `me`; cycles accept a name; parent filters accept an identifier. Disabled users cannot be assigned.
 - **GitHub webhook:** `POST /api/webhooks/github`, enabled by `--github-secret` or `VELO_GITHUB_WEBHOOK_SECRET`. Commits and PRs that mention `KEY-N` get a comment. `Fixes`, `Closes` or `Resolves KEY-N` on the default branch (or a PR merged into it) moves the issue to the first completed state. Comments are posted as the user with the matching email, otherwise as a built-in "GitHub" user that cannot log in.
 

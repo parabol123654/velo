@@ -302,3 +302,24 @@ func (c *Client) UnlinkIssues(ref, target string) (*db.Issue, error) {
 	err := c.do("DELETE", "/api/issues/"+url.PathEscape(ref)+"/links/"+url.PathEscape(target), nil, &out)
 	return &out, err
 }
+
+// NextIssue returns the next issue to start (waiting, unassigned, unblocked,
+// most urgent first), or nil when there is none.
+func (c *Client) NextIssue(project, label string) (*db.Issue, error) {
+	q := url.Values{}
+	if project != "" {
+		q.Set("project", project)
+	}
+	if label != "" {
+		q.Set("label", label)
+	}
+	var out *db.Issue
+	return out, c.do("GET", "/api/issues/next?"+q.Encode(), nil, &out)
+}
+
+// ClaimIssue assigns the issue to the caller and starts it.
+func (c *Client) ClaimIssue(ref string) (*db.Issue, error) {
+	var out db.Issue
+	err := c.do("POST", "/api/issues/"+url.PathEscape(ref)+"/claim", nil, &out)
+	return &out, err
+}

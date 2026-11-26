@@ -337,6 +337,23 @@ func dispatchTool(api *client.Client, name string, args map[string]any) (string,
 		}
 		return toPrettyJSON(cy), nil
 
+	case "next_issue":
+		iss, err := api.NextIssue(strArg(args, "project"), strArg(args, "label"))
+		if err != nil {
+			return "", err
+		}
+		if iss == nil {
+			return "No issue is waiting: nothing unstarted, unassigned and unblocked matches.", nil
+		}
+		return toPrettyJSON(iss), nil
+
+	case "claim_issue":
+		iss, err := api.ClaimIssue(strArg(args, "ref"))
+		if err != nil {
+			return "", err
+		}
+		return toPrettyJSON(iss), nil
+
 	case "link_issues":
 		iss, err := api.LinkIssues(strArg(args, "ref"), strArg(args, "kind"), strArg(args, "target"))
 		if err != nil {
@@ -516,6 +533,26 @@ func toolDefinitions() []map[string]any {
 					"status":     map[string]any{"type": "string", "description": "active (default), upcoming, or completed"},
 				},
 				"required": []string{"project", "name"},
+			},
+		},
+		{
+			"name":        "next_issue",
+			"description": "Get the next issue to work on: unstarted, unassigned and not blocked, most urgent first. Call claim_issue on it before starting.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"project": map[string]any{"type": "string", "description": "Optional project key (e.g. DEV)"},
+					"label":   map[string]any{"type": "string", "description": "Optional label name, e.g. agent"},
+				},
+			},
+		},
+		{
+			"name":        "claim_issue",
+			"description": "Assign an issue to yourself and move it to In Progress. Fails if someone else holds it, it is finished, or it is blocked, so two agents never take the same work.",
+			"inputSchema": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"ref": map[string]any{"type": "string", "description": "Issue identifier (e.g. DEV-12)"}},
+				"required":   []string{"ref"},
 			},
 		},
 		{

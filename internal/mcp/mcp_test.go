@@ -203,3 +203,18 @@ func TestMCPLinks(t *testing.T) {
 		t.Fatalf("unlinked issue still blocked: %s", text)
 	}
 }
+
+func TestMCPNextAndClaim(t *testing.T) {
+	api, _ := newMCPTestAPI(t, "first")
+	text, err := dispatchTool(api, "next_issue", map[string]any{"project": "VELO"})
+	if err != nil || !strings.Contains(text, `"identifier": "VELO-1"`) {
+		t.Fatalf("next_issue: %v %s", err, text)
+	}
+	text, err = dispatchTool(api, "claim_issue", map[string]any{"ref": "VELO-1"})
+	if err != nil || !strings.Contains(text, `"state_name": "In Progress"`) {
+		t.Fatalf("claim_issue: %v %s", err, text)
+	}
+	if text, _ := dispatchTool(api, "next_issue", map[string]any{"project": "VELO"}); !strings.HasPrefix(text, "No issue is waiting") {
+		t.Fatalf("empty queue: %s", text)
+	}
+}
