@@ -14,6 +14,7 @@ Velo covers the parts of Jira most small teams actually use: projects, issues, s
 - Full-text search (SQLite FTS5).
 - Live updates in the browser via Server-Sent Events.
 - Simple auth: first visit creates the admin, admins share invite links, API tokens for the CLI and MCP. No mail server needed.
+- Account management in Settings: change your password; admins reset passwords, change roles, disable or delete users.
 - Export a project to Markdown or JSON, import from JSON.
 
 ## Install
@@ -108,6 +109,7 @@ Velo must be reachable from GitHub for this to work (a VPS, or a tunnel when run
 
 ```bash
 make test                  # Go tests
+make test-web              # web tests (Vitest)
 cd web && npm run dev      # UI dev server on :5173, proxies /api to :8080
 ```
 
@@ -123,7 +125,7 @@ internal/client/  HTTP client used by CLI and MCP
 web/              React + TypeScript + Tailwind UI
 ```
 
-Contributors and coding agents should read [AGENTS.md](./AGENTS.md).
+Contributors and coding agents should read [AGENTS.md](./AGENTS.md). The system is described in [SPEC.md](./SPEC.md), open work is in [TODO.md](./TODO.md).
 
 ## License
 
