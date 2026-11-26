@@ -72,3 +72,24 @@ function parentsOf(issues: Issue[], ids: (string | undefined)[]): string[] {
   const wanted = new Set(ids.filter(Boolean));
   return issues.filter((it) => wanted.has(it.id)).map((it) => it.identifier);
 }
+
+// touchesIssue reports whether an event changes what the issue drawer shows
+// for issueId: the issue itself, one of its sub-issues, or its comments.
+export function touchesIssue(ev: LiveEvent, issueId: string): boolean {
+  switch (ev.type) {
+    case 'issue.created':
+    case 'issue.updated': {
+      const iss = ev.payload as Issue;
+      return iss.id === issueId || iss.parent_id === issueId;
+    }
+    case 'issue.deleted':
+    case 'comment.created':
+    case 'comment.updated':
+    case 'comment.deleted': {
+      const p = ev.payload as { id: string; issue_id?: string };
+      return ev.type === 'issue.deleted' ? p.id === issueId : p.issue_id === issueId;
+    }
+    default:
+      return false;
+  }
+}

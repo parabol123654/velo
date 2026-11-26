@@ -57,6 +57,7 @@ export function App() {
   const [selectedIssueRef, setSelectedIssueRef] = useState<string | null>(null);
   const [focusedIdx, setFocusedIdx] = useState<number>(0);
   const [sseConnected, setSseConnected] = useState(false);
+  const [lastEvent, setLastEvent] = useState<LiveEvent | null>(null);
 
   // Modals
   const [cmdOpen, setCmdOpen] = useState(false);
@@ -184,6 +185,7 @@ export function App() {
       } catch {
         return;
       }
+      setLastEvent(ev);
       const res = applyEvent(issuesRef.current, ev, projectIdRef.current);
       if (res.reload) {
         reloadTimer = debounce(reloadTimer, () => void loadWorkspaceRef.current());
@@ -997,6 +999,7 @@ export function App() {
         onClose={() => setSelectedIssueRef(null)}
         onSelectIssueRef={setSelectedIssueRef}
         currentUser={user}
+        lastEvent={lastEvent}
       />
 
       <CommandPalette

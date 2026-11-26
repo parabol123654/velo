@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Issue } from './api';
-import { applyEvent } from './live';
+import { applyEvent, touchesIssue } from './live';
 
 const P = 'proj1';
 
@@ -102,5 +102,20 @@ describe('applyEvent', () => {
     for (const type of ['project.created', 'project.deleted', 'state.updated', 'cycle.deleted', 'user.updated']) {
       expect(applyEvent([], { type, payload: {} }, P).reload).toBe(true);
     }
+  });
+});
+
+describe('touchesIssue', () => {
+  it('matches changes to the issue, its sub-issues and its comments', () => {
+    expect(touchesIssue({ type: 'issue.updated', payload: issue('1') }, '1')).toBe(true);
+    expect(touchesIssue({ type: 'issue.created', payload: issue('2', { parent_id: '1' }) }, '1')).toBe(true);
+    expect(touchesIssue({ type: 'issue.deleted', payload: { id: '1' } }, '1')).toBe(true);
+    expect(touchesIssue({ type: 'comment.deleted', payload: { id: 'c', issue_id: '1' } }, '1')).toBe(true);
+  });
+
+  it('ignores unrelated events', () => {
+    expect(touchesIssue({ type: 'issue.updated', payload: issue('2') }, '1')).toBe(false);
+    expect(touchesIssue({ type: 'comment.created', payload: { id: 'c', issue_id: '2' } }, '1')).toBe(false);
+    expect(touchesIssue({ type: 'project.updated', payload: {} }, '1')).toBe(false);
   });
 });

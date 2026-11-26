@@ -12,6 +12,7 @@ import {
   User,
   WorkflowState,
 } from '../api';
+import { LiveEvent, touchesIssue } from '../live';
 import { MarkdownEditor, MarkdownView } from './Markdown';
 
 export function IssueDrawer({
@@ -23,6 +24,7 @@ export function IssueDrawer({
   onClose,
   onSelectIssueRef,
   currentUser,
+  lastEvent,
 }: {
   issueRef: string | null;
   states: WorkflowState[];
@@ -32,6 +34,7 @@ export function IssueDrawer({
   onClose: () => void;
   onSelectIssueRef: (ref: string) => void;
   currentUser: User;
+  lastEvent: LiveEvent | null;
 }) {
   const [issue, setIssue] = useState<Issue | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -63,6 +66,22 @@ export function IssueDrawer({
     setEditingDesc(false);
     void loadDetail(issueRef);
   }, [issueRef]);
+
+  // Someone else changed this issue: refresh, but keep any text being edited here.
+  useEffect(() => {
+    if (!lastEvent || !issue || !touchesIssue(lastEvent, issue.id)) return;
+    if (lastEvent.type === 'issue.deleted') {
+      onClose();
+      return;
+    }
+    void api.getIssueDetail(issue.identifier).then((d) => {
+      setIssue(d.issue);
+      setComments(d.comments);
+      setActivities(d.activities);
+      if (!editingTitle) setTitleDraft(d.issue.title);
+      if (!editingDesc) setDescDraft(d.issue.description);
+    });
+  }, [lastEvent]); // only a new event should trigger a refresh
 
   if (!issueRef || !issue) return null;
 
