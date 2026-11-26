@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import {
   api,
+  assignableUsers,
   Cycle,
   getPriorityMeta,
   Issue,
@@ -549,7 +550,7 @@ export function App() {
                   className="text-xs px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300"
                 >
                   <option value="">All Assignees</option>
-                  {users.map((u) => (
+                  {assignableUsers(users, filterAssignee).map((u) => (
                     <option key={u.id} value={u.id}>
                       {u.name}
                     </option>
@@ -935,7 +936,7 @@ export function App() {
                   className="text-xs px-2.5 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900"
                 >
                   <option value="">Unassigned</option>
-                  {users.map((u) => (
+                  {assignableUsers(users, issAssignee).map((u) => (
                     <option key={u.id} value={u.id}>
                       {u.name}
                     </option>

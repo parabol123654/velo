@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { X, Trash2, Plus, GitBranch, MessageSquare, Activity as ActivityIcon, Edit2, Check } from 'lucide-react';
 import {
   api,
+  assignableUsers,
   Activity,
   Comment,
   Cycle,
@@ -217,7 +218,7 @@ export function IssueDrawer({
                 className="w-full px-2 py-1.5 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200"
               >
                 <option value="">Unassigned</option>
-                {users.map((u) => (
+                {assignableUsers(users, issue.assignee_id).map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.name}
                   </option>

@@ -301,6 +301,12 @@ export const api = {
     }),
 };
 
+// assignableUsers lists enabled users for pickers, keeping the currently selected
+// user (even if disabled) so an existing assignment still shows its name.
+export function assignableUsers(users: User[], selectedId?: string): User[] {
+  return users.filter((u) => !u.disabled_at || u.id === selectedId);
+}
+
 export const PRIORITIES = [
   { value: 0, label: 'No priority', short: '—', color: 'text-zinc-400' },
   { value: 1, label: 'Low', short: 'Low', color: 'text-sky-500' },
