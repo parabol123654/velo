@@ -19,3 +19,4 @@ jobs:
       - run: make build
       - run: go vet ./...
       - run: make test
+      - run: cd web && npm test

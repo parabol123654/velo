@@ -63,6 +63,16 @@ function renderInline(text: string): React.ReactNode[] {
   });
 }
 
+// toggleChecklistLine flips the `- [ ]` / `- [x]` marker on one line of Markdown.
+export function toggleChecklistLine(content: string, lineIdx: number, currentlyChecked: boolean): string {
+  const lines = content.split('\n');
+  lines[lineIdx] = lines[lineIdx].replace(
+    currentlyChecked ? /^(\s*[-*]\s+)\[[xX]\]/ : /^(\s*[-*]\s+)\[ \]/,
+    currentlyChecked ? '$1[ ]' : '$1[x]'
+  );
+  return lines.join('\n');
+}
+
 export function MarkdownView({
   content,
   onToggleChecklist,
@@ -79,13 +89,7 @@ export function MarkdownView({
   let i = 0;
 
   const toggleLine = (lineIdx: number, currentlyChecked: boolean) => {
-    if (!onToggleChecklist) return;
-    const next = [...lines];
-    next[lineIdx] = next[lineIdx].replace(
-      currentlyChecked ? /^(\s*[-*]\s+)\[[xX]\]/ : /^(\s*[-*]\s+)\[ \]/,
-      currentlyChecked ? '$1[ ]' : '$1[x]'
-    );
-    onToggleChecklist(next.join('\n'));
+    onToggleChecklist?.(toggleChecklistLine(content, lineIdx, currentlyChecked));
   };
 
   while (i < lines.length) {

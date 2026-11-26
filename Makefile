@@ -1,4 +1,4 @@
-.PHONY: all build build-web build-go test clean run
+.PHONY: all build build-web build-go test test-web clean run
 
 all: build
 
@@ -12,6 +12,9 @@ build: build-web build-go
 
 test:
 	CGO_ENABLED=0 go test ./... -v
+
+test-web:
+	cd web && npm test
 
 run: build
 	./velo serve --addr :8080 --data ./data
