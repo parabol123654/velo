@@ -38,6 +38,9 @@ type Server struct {
 	hub        *SSEHub
 	staticFS   fs.FS
 	mux        *http.ServeMux
+
+	// GitHubWebhookSecret enables POST /api/webhooks/github when non-empty.
+	GitHubWebhookSecret string
 }
 
 func New(store *db.Store, dataDir string, staticFS fs.FS) (*Server, error) {
@@ -156,6 +159,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/auth/login", s.handleAuthLogin)
 	s.mux.HandleFunc("POST /api/auth/logout", s.handleAuthLogout)
 	s.mux.HandleFunc("POST /api/auth/accept-invite", s.handleAcceptInvite)
+	s.mux.HandleFunc("POST /api/webhooks/github", s.handleGitHubWebhook)
 
 	// SSE live stream
 	s.mux.HandleFunc("GET /api/events", s.requireAuth(s.hub.ServeHTTP))

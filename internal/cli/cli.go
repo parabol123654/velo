@@ -22,7 +22,7 @@ import (
 	"github.com/parabol123654/velo/web"
 )
 
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 func Run(args []string) error {
 	if len(args) == 0 {
@@ -60,6 +60,7 @@ func printUsage() {
 
 Usage:
   velo serve [--addr :8080] [--data ./data]     Start Web UI, REST API & SSE server
+             [--github-secret ...]              Enable GitHub webhook at /api/webhooks/github
   velo login --token <velo_...> [--url ...]     Save API token & server URL to ~/.config/velo/config.json
   velo project list                             List projects
   velo project create <KEY> <NAME> [--desc ...] Create a new project
@@ -78,6 +79,7 @@ func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	addr := fs.String("addr", ":8080", "HTTP listen address (e.g. :8080 or 127.0.0.1:8080)")
 	dataDir := fs.String("data", "./data", "Directory for SQLite database and uploads")
+	ghSecret := fs.String("github-secret", os.Getenv("VELO_GITHUB_WEBHOOK_SECRET"), "Secret for GitHub webhooks at /api/webhooks/github (disabled if empty)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -97,6 +99,7 @@ func runServe(args []string) error {
 	if err != nil {
 		return err
 	}
+	srv.GitHubWebhookSecret = *ghSecret
 
 	httpSrv := &http.Server{
 		Addr:              *addr,
@@ -114,6 +117,9 @@ func runServe(args []string) error {
 	fmt.Printf("⚡ Velo v%s running at %s\n", Version, displayURL)
 	fmt.Printf("   Data directory : %s\n", *dataDir)
 	fmt.Printf("   MCP command    : velo mcp\n")
+	if *ghSecret != "" {
+		fmt.Printf("   GitHub webhook : %s/api/webhooks/github\n", displayURL)
+	}
 
 	errCh := make(chan error, 1)
 	go func() {

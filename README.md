@@ -79,6 +79,31 @@ Tools: `list_projects`, `list_issues`, `get_issue`, `create_issue`, `update_issu
 
 Changes made through MCP or the CLI go through the same HTTP API as the web UI, so open boards update immediately.
 
+## GitHub webhook
+
+Start Velo with a secret:
+
+```bash
+./velo serve --github-secret "some-long-random-string"
+# or: VELO_GITHUB_WEBHOOK_SECRET=... ./velo serve
+```
+
+In your GitHub repo, go to Settings > Webhooks > Add webhook:
+
+- Payload URL: `https://your-velo-host/api/webhooks/github`
+- Content type: `application/json`
+- Secret: the same string
+- Events: "Pushes" and "Pull requests"
+
+What it does:
+
+- A commit mentioning `DEV-42` adds a comment on DEV-42 with a link to the commit.
+- `Fixes DEV-42`, `Closes DEV-42` or `Resolves DEV-42` in a commit pushed to the default branch moves the issue to Done. On other branches it only comments.
+- A pull request mentioning issues adds a comment when opened. When it is merged into the default branch, issues with a closing keyword in the title or body move to Done.
+- If the commit author's email matches a Velo user, the comment is posted as that user. Otherwise it is posted as "GitHub".
+
+Velo must be reachable from GitHub for this to work (a VPS, or a tunnel when running locally).
+
 ## Development
 
 ```bash

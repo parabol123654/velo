@@ -79,7 +79,7 @@ func handleRequest(req rpcRequest, api *client.Client) rpcResponse {
 				},
 				"serverInfo": map[string]any{
 					"name":    "velo-mcp",
-					"version": "0.1.0",
+					"version": "0.2.0",
 				},
 			},
 		}
