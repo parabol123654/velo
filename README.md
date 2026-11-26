@@ -142,7 +142,7 @@ internal/client/  HTTP client used by CLI and MCP
 web/              React + TypeScript + Tailwind UI
 ```
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) to get started. Contributors and coding agents should read [AGENTS.md](./AGENTS.md). The system is described in [SPEC.md](./SPEC.md), open work is in [TODO.md](./TODO.md).
+See [CONTRIBUTING.md](./CONTRIBUTING.md) to get started. Contributors and coding agents should read [AGENTS.md](./AGENTS.md). The system is described in [SPEC.md](./SPEC.md), open work is in [GitHub Issues](https://github.com/parabol123654/velo/issues).
 
 ## License
 

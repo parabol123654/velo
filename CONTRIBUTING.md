@@ -5,7 +5,7 @@ Thanks for helping. Velo stays small on purpose, so the bar for a change is "doe
 ## Before you start
 
 - Read [AGENTS.md](./AGENTS.md) (the rules, for humans and coding agents alike) and [SPEC.md](./SPEC.md) (how the system behaves).
-- Look at [TODO.md](./TODO.md) for open work. For anything bigger than a bug fix, open an issue first and describe the problem and your approach, so nobody spends a weekend on a PR that cannot be merged.
+- Look at [GitHub Issues](https://github.com/parabol123654/velo/issues) for open work; `good first issue` is a good place to start. Issues titled "Idea:" are not committed yet, so discuss them there before writing code. For anything bigger than a bug fix, open an issue first and describe the problem and your approach, so nobody spends a weekend on a PR that cannot be merged.
 
 ## Setup
 
@@ -46,7 +46,7 @@ Every change comes with a test that would fail without it. Bug fixes start with 
 ## Pull requests
 
 - One topic per PR. Small PRs get reviewed faster.
-- If the change alters behavior described in SPEC.md, update SPEC.md in the same PR. Tick or add items in TODO.md when relevant.
+- If the change alters behavior described in SPEC.md, update SPEC.md in the same PR. Link the issue it closes (`Fixes #12`).
 - Commit messages follow `type: summary` with `feat`, `fix`, `docs`, `test`, `chore` or `style`, for example `fix: keep the current session after a password change`.
 - Describe what changed, why, and how you checked it.
 

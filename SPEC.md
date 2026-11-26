@@ -1,6 +1,6 @@
 # Velo spec
 
-What Velo is and the rules it keeps. This describes the current system, not a plan; open work lives in [TODO.md](./TODO.md). Contributor rules are in [AGENTS.md](./AGENTS.md).
+What Velo is and the rules it keeps. This describes the current system, not a plan; open work lives in [GitHub Issues](https://github.com/parabol123654/velo/issues). Contributor rules are in [AGENTS.md](./AGENTS.md).
 
 ## Goal
 
