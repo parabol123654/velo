@@ -195,3 +195,25 @@ func TestConcurrentIssuesFTSAndExportImport(t *testing.T) {
 		t.Fatalf("ImportProjectJSON failed: %v, %+v", err, impProj)
 	}
 }
+
+func TestBackupTo(t *testing.T) {
+	st := newTestStore(t)
+	if _, err := st.CreateFirstAdmin("admin@velo.local", "Admin", "secret123"); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "backup.db")
+	if err := st.BackupTo(out); err != nil {
+		t.Fatalf("BackupTo: %v", err)
+	}
+	if err := st.BackupTo(out); !errors.Is(err, ErrConflict) {
+		t.Fatalf("overwrite should be refused, got %v", err)
+	}
+	copyStore, err := Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer copyStore.Close()
+	if has, err := copyStore.HasUsers(); err != nil || !has {
+		t.Fatalf("backup lacks data: %v %v", has, err)
+	}
+}

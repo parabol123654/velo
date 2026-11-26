@@ -86,6 +86,17 @@ Assignees can be given as an email or `me`, cycles and labels by name, parents b
 
 Changes made through MCP or the CLI go through the same HTTP API as the web UI, so open boards update immediately.
 
+## Backup
+
+```bash
+./velo backup --data ./data backup-$(date +%F).db   # safe while the server runs
+cp -r ./data/uploads backup-uploads/                 # pasted images are plain files
+```
+
+With Docker: `docker exec <container> velo backup --data /data /data/backup.db`. To restore, stop Velo and put the backup in place as `data/velo.db`.
+
+Do not copy `velo.db` alone while the server runs: recent writes may still be in `velo.db-wal`.
+
 ## GitHub webhook
 
 Start Velo with a secret:

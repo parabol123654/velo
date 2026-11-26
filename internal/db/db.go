@@ -50,6 +50,16 @@ func Open(dbPath string) (*Store, error) {
 	return s, nil
 }
 
+// BackupTo writes a consistent, compacted copy of the database to path
+// (which must not exist). Safe while the server is running.
+func (s *Store) BackupTo(path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("%w: %s already exists", ErrConflict, path)
+	}
+	_, err := s.db.Exec(`VACUUM INTO ?`, path)
+	return err
+}
+
 func (s *Store) Close() error {
 	return s.db.Close()
 }

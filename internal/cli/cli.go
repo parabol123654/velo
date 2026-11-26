@@ -49,6 +49,8 @@ func Run(args []string) error {
 		return runUsers(args[1:])
 	case "mcp":
 		return runMCP(args[1:])
+	case "backup":
+		return runBackup(args[1:])
 	case "version", "-v", "--version":
 		fmt.Printf("velo v%s\n", Version)
 		return nil
@@ -84,6 +86,7 @@ Usage:
   velo user list                                List users (emails work as --assignee; so does "me")
   velo search <QUERY>                           Instant FTS5 full-text search
   velo mcp [--url ...] [--token ...]            Start MCP server over stdio for AI coding agents
+  velo backup [--data ./data] <FILE.db>         Copy the database safely, even while serving
   velo version                                  Print version
 `)
 }
@@ -708,4 +711,31 @@ func runUsers(args []string) error {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", usr.Email, usr.Name, usr.Role, status)
 	}
 	return tw.Flush()
+}
+
+func runBackup(args []string) error {
+	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
+	dataDir := fs.String("data", "./data", "Data directory of the Velo server")
+	out, err := parseWithName(fs, args)
+	if err != nil {
+		return err
+	}
+	if out == "" {
+		return fmt.Errorf("usage: velo backup [--data ./data] <FILE.db>")
+	}
+	dbPath := filepath.Join(*dataDir, "velo.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		return fmt.Errorf("no database at %s: %w", dbPath, err)
+	}
+	st, err := db.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if err := st.BackupTo(out); err != nil {
+		return err
+	}
+	fmt.Printf("Backed up %s to %s (uploads are files in %s; copy that folder too)\n",
+		dbPath, out, filepath.Join(*dataDir, "uploads"))
+	return nil
 }
