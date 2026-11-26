@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS users (
 	name          TEXT NOT NULL,
 	password_hash TEXT NOT NULL,
 	role          TEXT NOT NULL CHECK (role IN ('admin', 'member')),
+	disabled_at   DATETIME,
 	created_at    DATETIME NOT NULL
 );
 
@@ -250,6 +251,18 @@ CREATE INDEX IF NOT EXISTS idx_attachments_issue ON attachments(issue_id);
 `
 
 func (s *Store) migrate() error {
-	_, err := s.db.Exec(schemaSQL)
-	return err
+	if _, err := s.db.Exec(schemaSQL); err != nil {
+		return err
+	}
+	// v0.2: users.disabled_at (databases created by v0.1 lack it).
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name = 'disabled_at'`).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE users ADD COLUMN disabled_at DATETIME`); err != nil {
+			return err
+		}
+	}
+	return nil
 }

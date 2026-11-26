@@ -3,6 +3,7 @@ export interface User {
   email: string;
   name: string;
   role: 'admin' | 'member';
+  disabled_at?: string;
   created_at: string;
 }
 
@@ -180,6 +181,17 @@ export const api = {
       body: JSON.stringify({ email, name, password, role }),
     }),
 
+  updateUser: (id: string, patch: { role?: 'admin' | 'member'; disabled?: boolean }) =>
+    req<User>(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  deleteUser: (id: string) => req<{ ok: boolean }>(`/api/users/${id}`, { method: 'DELETE' }),
+  resetPassword: (id: string, password: string) =>
+    req<{ ok: boolean }>(`/api/users/${id}/password`, { method: 'POST', body: JSON.stringify({ password }) }),
+  changePassword: (current_password: string, new_password: string) =>
+    req<{ ok: boolean }>('/api/auth/password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password, new_password }),
+    }),
+
   listTokens: () => req<APIToken[]>('/api/tokens'),
   createToken: (name: string) =>
     req<{ token: string; token_meta: APIToken }>('/api/tokens', {
@@ -237,6 +249,7 @@ export const api = {
     });
     return req<Issue[]>(`/api/issues?${qs.toString()}`);
   },
+  getIssue: (ref: string) => req<Issue>(`/api/issues/${encodeURIComponent(ref)}`),
   getIssueDetail: (ref: string) =>
     req<{ issue: Issue; comments: Comment[]; activities: Activity[] }>(
       `/api/issues/${encodeURIComponent(ref)}?detail=1`

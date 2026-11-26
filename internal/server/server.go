@@ -167,6 +167,10 @@ func (s *Server) routes() {
 	// Users, Tokens & Invites
 	s.mux.HandleFunc("GET /api/users", s.requireAuth(s.handleListUsers))
 	s.mux.HandleFunc("POST /api/users", s.requireAdmin(s.handleCreateUser))
+	s.mux.HandleFunc("PATCH /api/users/{id}", s.requireAdmin(s.handleUpdateUser))
+	s.mux.HandleFunc("DELETE /api/users/{id}", s.requireAdmin(s.handleDeleteUser))
+	s.mux.HandleFunc("POST /api/users/{id}/password", s.requireAdmin(s.handleResetPassword))
+	s.mux.HandleFunc("POST /api/auth/password", s.requireAuth(s.handleChangePassword))
 	s.mux.HandleFunc("GET /api/tokens", s.requireAuth(s.handleListTokens))
 	s.mux.HandleFunc("POST /api/tokens", s.requireAuth(s.handleCreateToken))
 	s.mux.HandleFunc("DELETE /api/tokens/{id}", s.requireAuth(s.handleDeleteToken))
@@ -334,6 +338,71 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, u)
+}
+
+func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
+	var in db.UpdateUserInput
+	if err := decodeJSON(r, &in); err != nil {
+		writeErr(w, err)
+		return
+	}
+	u, err := s.store.UpdateUser(currentUser(r).ID, r.PathValue("id"), in)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.Broadcast("user.updated", u)
+	writeJSON(w, http.StatusOK, u)
+}
+
+func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.store.DeleteUser(currentUser(r).ID, id); err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.Broadcast("user.deleted", map[string]string{"id": id})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if err := s.store.ResetPassword(r.PathValue("id"), body.Password); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleChangePassword changes the caller's own password and signs out their
+// other sessions, keeping the one used for this request.
+func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, err)
+		return
+	}
+	keep := ""
+	if c, err := r.Cookie(sessionCookieName); err == nil {
+		keep = c.Value
+	}
+	if auth := r.Header.Get("Authorization"); len(auth) > 7 && strings.HasPrefix(strings.TrimSpace(auth[7:]), "vs_") {
+		keep = strings.TrimSpace(auth[7:])
+	}
+	if err := s.store.ChangePassword(currentUser(r).ID, body.CurrentPassword, body.NewPassword, keep); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {

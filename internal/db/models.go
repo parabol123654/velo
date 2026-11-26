@@ -3,12 +3,13 @@ package db
 import "time"
 
 type User struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email"`
-	Name         string    `json:"name"`
-	Role         string    `json:"role"` // "admin" | "member"
-	PasswordHash string    `json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID           string     `json:"id"`
+	Email        string     `json:"email"`
+	Name         string     `json:"name"`
+	Role         string     `json:"role"` // "admin" | "member"
+	PasswordHash string     `json:"-"`
+	DisabledAt   *time.Time `json:"disabled_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 type APIToken struct {

@@ -27,6 +27,9 @@ export function SettingsModal({
   const [invites, setInvites] = useState<Invite[]>([]);
   const [newLabelName, setNewLabelName] = useState('');
   const [newLabelColor, setNewLabelColor] = useState('#6366f1');
+  const [curPass, setCurPass] = useState('');
+  const [newPass, setNewPass] = useState('');
+  const [passMsg, setPassMsg] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -57,6 +60,28 @@ export function SettingsModal({
   const handleCreateInvite = async () => {
     const inv = await api.createInvite('member');
     setInvites((prev) => [inv, ...prev]);
+  };
+
+  // Run an admin action on a user; show server errors (e.g. last admin) instead of failing silently.
+  const userAction = async (fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    }
+    setUsers(await api.listUsers());
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await api.changePassword(curPass, newPass);
+      setCurPass('');
+      setNewPass('');
+      setPassMsg('Password changed. Other sessions were signed out.');
+    } catch (err) {
+      setPassMsg(err instanceof Error ? err.message : String(err));
+    }
   };
 
   const handleAddLabel = async (e: React.FormEvent) => {
@@ -230,18 +255,100 @@ export function SettingsModal({
               <div>
                 <h3 className="font-semibold text-zinc-900 dark:text-zinc-100 mb-2">Workspace Members ({users.length})</h3>
                 <div className="divide-y divide-zinc-200 dark:divide-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl">
-                  {users.map((u) => (
-                    <div key={u.id} className="flex items-center justify-between px-3 py-2 text-xs">
-                      <div>
-                        <span className="font-medium text-zinc-800 dark:text-zinc-200">{u.name}</span>
-                        <span className="ml-2 text-zinc-400">{u.email}</span>
+                  {users.map((u) => {
+                    const manageable = currentUser.role === 'admin' && u.id !== currentUser.id;
+                    const linkBtn = 'text-indigo-500 hover:underline cursor-pointer';
+                    return (
+                      <div key={u.id} className="flex items-center justify-between gap-2 px-3 py-2 text-xs">
+                        <div className={u.disabled_at ? 'opacity-50' : ''}>
+                          <span className="font-medium text-zinc-800 dark:text-zinc-200">{u.name}</span>
+                          <span className="ml-2 text-zinc-400">{u.email}</span>
+                          {u.disabled_at && <span className="ml-2 text-rose-500">Disabled</span>}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {manageable && (
+                            <>
+                              <button
+                                className={linkBtn}
+                                onClick={() => {
+                                  const pw = prompt(`New password for ${u.email} (min 6 characters):`);
+                                  if (pw) void userAction(() => api.resetPassword(u.id, pw));
+                                }}
+                              >
+                                Reset password
+                              </button>
+                              <button
+                                className={linkBtn}
+                                onClick={() => void userAction(() => api.updateUser(u.id, { disabled: !u.disabled_at }))}
+                              >
+                                {u.disabled_at ? 'Enable' : 'Disable'}
+                              </button>
+                              <button
+                                title="Delete (only users with no issues, comments or activity)"
+                                className="text-zinc-400 hover:text-rose-500 cursor-pointer"
+                                onClick={() => {
+                                  if (confirm(`Delete ${u.email}? This cannot be undone.`)) {
+                                    void userAction(() => api.deleteUser(u.id));
+                                  }
+                                }}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+                          {manageable ? (
+                            <select
+                              value={u.role}
+                              onChange={(e) =>
+                                void userAction(() =>
+                                  api.updateUser(u.id, { role: e.target.value as 'admin' | 'member' })
+                                )
+                              }
+                              className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-500 cursor-pointer"
+                            >
+                              <option value="member">member</option>
+                              <option value="admin">admin</option>
+                            </select>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-500 capitalize">
+                              {u.role}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <span className="px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-500 capitalize">
-                        {u.role}
-                      </span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
+              </div>
+
+              <div>
+                <h4 className="font-semibold text-zinc-900 dark:text-zinc-100 mb-2">Change your password</h4>
+                <form onSubmit={handleChangePassword} className="flex gap-2">
+                  <input
+                    type="password"
+                    value={curPass}
+                    onChange={(e) => setCurPass(e.target.value)}
+                    placeholder="Current password"
+                    autoComplete="current-password"
+                    className="flex-1 px-3 py-1.5 rounded-lg text-xs border border-zinc-300 dark:border-zinc-700 bg-transparent"
+                  />
+                  <input
+                    type="password"
+                    value={newPass}
+                    onChange={(e) => setNewPass(e.target.value)}
+                    placeholder="New password (min 6)"
+                    autoComplete="new-password"
+                    className="flex-1 px-3 py-1.5 rounded-lg text-xs border border-zinc-300 dark:border-zinc-700 bg-transparent"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!curPass || !newPass}
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium cursor-pointer"
+                  >
+                    Change
+                  </button>
+                </form>
+                {passMsg && <p className="mt-1.5 text-xs text-zinc-500">{passMsg}</p>}
               </div>
 
               {currentUser.role === 'admin' && (

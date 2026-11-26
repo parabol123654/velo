@@ -27,8 +27,8 @@ func normalizeCredentials(email, name, password string) (string, string, error) 
 	if name == "" {
 		return "", "", fmt.Errorf("%w: name is required", ErrValidation)
 	}
-	if len(password) < 6 {
-		return "", "", fmt.Errorf("%w: password must be at least 6 characters", ErrValidation)
+	if err := validatePassword(password); err != nil {
+		return "", "", err
 	}
 	return email, name, nil
 }
@@ -115,7 +115,7 @@ func (s *Store) AuthenticatePassword(email, password string) (*User, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	var u User
 	err := s.db.QueryRow(
-		`SELECT id, email, name, password_hash, role, created_at FROM users WHERE email = ?`,
+		`SELECT id, email, name, password_hash, role, created_at FROM users WHERE email = ? AND disabled_at IS NULL`,
 		email,
 	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Role, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -154,7 +154,7 @@ func (s *Store) GetUserBySession(rawToken string) (*User, error) {
 		`SELECT u.id, u.email, u.name, u.role, u.created_at, s.expires_at
 		 FROM sessions s
 		 JOIN users u ON u.id = s.user_id
-		 WHERE s.token_hash = ?`,
+		 WHERE s.token_hash = ? AND u.disabled_at IS NULL`,
 		hashToken(rawToken),
 	).Scan(&u.ID, &u.Email, &u.Name, &u.Role, &u.CreatedAt, &exp)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -212,7 +212,7 @@ func (s *Store) GetUserByAPIToken(rawToken string) (*User, error) {
 		`SELECT u.id, u.email, u.name, u.role, u.created_at
 		 FROM api_tokens t
 		 JOIN users u ON u.id = t.user_id
-		 WHERE t.token_hash = ?`,
+		 WHERE t.token_hash = ? AND u.disabled_at IS NULL`,
 		h,
 	).Scan(&u.ID, &u.Email, &u.Name, &u.Role, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -376,7 +376,7 @@ func (s *Store) AcceptInvite(code, email, name, password string) (*User, error) 
 }
 
 func (s *Store) ListUsers() ([]User, error) {
-	rows, err := s.db.Query(`SELECT id, email, name, role, created_at FROM users ORDER BY created_at ASC`)
+	rows, err := s.db.Query(`SELECT id, email, name, role, disabled_at, created_at FROM users ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -385,10 +385,179 @@ func (s *Store) ListUsers() ([]User, error) {
 	out := []User{}
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Role, &u.CreatedAt); err != nil {
+		var disabled sql.NullTime
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Role, &disabled, &u.CreatedAt); err != nil {
 			return nil, err
+		}
+		if disabled.Valid {
+			tm := disabled.Time
+			u.DisabledAt = &tm
 		}
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) getUser(id string) (*User, error) {
+	var u User
+	var disabled sql.NullTime
+	err := s.db.QueryRow(
+		`SELECT id, email, name, role, password_hash, disabled_at, created_at FROM users WHERE id = ?`, id,
+	).Scan(&u.ID, &u.Email, &u.Name, &u.Role, &u.PasswordHash, &disabled, &u.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if disabled.Valid {
+		tm := disabled.Time
+		u.DisabledAt = &tm
+	}
+	return &u, nil
+}
+
+func validatePassword(password string) error {
+	if len(password) < 6 {
+		return fmt.Errorf("%w: password must be at least 6 characters", ErrValidation)
+	}
+	return nil
+}
+
+// ChangePassword lets a user change their own password. All of the user's
+// sessions except keepSession (the caller's current one, may be empty) are revoked.
+func (s *Store) ChangePassword(userID, current, next, keepSession string) error {
+	u, err := s.getUser(userID)
+	if err != nil {
+		return err
+	}
+	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(current)) != nil {
+		return fmt.Errorf("%w: current password is incorrect", ErrValidation)
+	}
+	return s.setPassword(userID, next, keepSession)
+}
+
+// ResetPassword is the admin path: set a new password and revoke all sessions.
+func (s *Store) ResetPassword(userID, next string) error {
+	if _, err := s.getUser(userID); err != nil {
+		return err
+	}
+	return s.setPassword(userID, next, "")
+}
+
+func (s *Store) setPassword(userID, next, keepSession string) error {
+	if err := validatePassword(next); err != nil {
+		return err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(next), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE users SET password_hash = ? WHERE id = ?`, string(hash), userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM sessions WHERE user_id = ? AND token_hash != ?`, userID, hashToken(keepSession)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// otherActiveAdmins counts enabled admins other than userID.
+func (s *Store) otherActiveAdmins(userID string) (int, error) {
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled_at IS NULL AND id != ?`, userID,
+	).Scan(&n)
+	return n, err
+}
+
+type UpdateUserInput struct {
+	Role     *string `json:"role"`
+	Disabled *bool   `json:"disabled"`
+}
+
+// UpdateUser changes a user's role or disabled flag (admin only). An admin
+// cannot change themselves, and the last enabled admin cannot be demoted or disabled.
+// Disabling revokes the user's sessions; API tokens stop working while disabled.
+func (s *Store) UpdateUser(actorID, userID string, in UpdateUserInput) (*User, error) {
+	if actorID == userID {
+		return nil, fmt.Errorf("%w: you cannot change your own role or status", ErrValidation)
+	}
+	u, err := s.getUser(userID)
+	if err != nil {
+		return nil, err
+	}
+	if in.Role != nil && *in.Role != "admin" && *in.Role != "member" {
+		return nil, fmt.Errorf("%w: role must be admin or member", ErrValidation)
+	}
+	losesAdmin := u.Role == "admin" && ((in.Role != nil && *in.Role != "admin") || (in.Disabled != nil && *in.Disabled))
+	if losesAdmin {
+		n, err := s.otherActiveAdmins(userID)
+		if err != nil {
+			return nil, err
+		}
+		if n == 0 {
+			return nil, fmt.Errorf("%w: cannot remove the last active admin", ErrValidation)
+		}
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if in.Role != nil {
+		if _, err := tx.Exec(`UPDATE users SET role = ? WHERE id = ?`, *in.Role, userID); err != nil {
+			return nil, err
+		}
+	}
+	if in.Disabled != nil {
+		if *in.Disabled {
+			if _, err := tx.Exec(`UPDATE users SET disabled_at = COALESCE(disabled_at, ?) WHERE id = ?`, nowUTC(), userID); err != nil {
+				return nil, err
+			}
+			if _, err := tx.Exec(`DELETE FROM sessions WHERE user_id = ?`, userID); err != nil {
+				return nil, err
+			}
+		} else if _, err := tx.Exec(`UPDATE users SET disabled_at = NULL WHERE id = ?`, userID); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.getUser(userID)
+}
+
+// DeleteUser removes a user who has no history (issues created, comments,
+// activity, uploads). Users with history must be disabled instead.
+func (s *Store) DeleteUser(actorID, userID string) error {
+	if actorID == userID {
+		return fmt.Errorf("%w: you cannot delete yourself", ErrValidation)
+	}
+	u, err := s.getUser(userID)
+	if err != nil {
+		return err
+	}
+	if u.Role == "admin" && u.DisabledAt == nil {
+		n, err := s.otherActiveAdmins(userID)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("%w: cannot remove the last active admin", ErrValidation)
+		}
+	}
+	if _, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, userID); err != nil {
+		if strings.Contains(strings.ToUpper(err.Error()), "FOREIGN KEY") {
+			return fmt.Errorf("%w: user has issues, comments or activity; disable the account instead", ErrConflict)
+		}
+		return err
+	}
+	return nil
 }
