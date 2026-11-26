@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/velo-dev/velo/internal/cli"
+	"github.com/parabol123654/velo/internal/cli"
 )
 
 func main() {

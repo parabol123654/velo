@@ -34,7 +34,7 @@
 ### Build & Run in 3 Commands
 
 ```bash
-git clone https://github.com/your-username/velo.git
+git clone https://github.com/parabol123654/velo.git
 cd velo
 make build
 ./velo serve --addr :8080 --data ./data

@@ -15,11 +15,11 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/velo-dev/velo/internal/client"
-	"github.com/velo-dev/velo/internal/db"
-	"github.com/velo-dev/velo/internal/mcp"
-	"github.com/velo-dev/velo/internal/server"
-	"github.com/velo-dev/velo/web"
+	"github.com/parabol123654/velo/internal/client"
+	"github.com/parabol123654/velo/internal/db"
+	"github.com/parabol123654/velo/internal/mcp"
+	"github.com/parabol123654/velo/internal/server"
+	"github.com/parabol123654/velo/web"
 )
 
 const Version = "0.1.0"

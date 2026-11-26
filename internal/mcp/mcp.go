@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/velo-dev/velo/internal/client"
-	"github.com/velo-dev/velo/internal/db"
+	"github.com/parabol123654/velo/internal/client"
+	"github.com/parabol123654/velo/internal/db"
 )
 
 type rpcRequest struct {

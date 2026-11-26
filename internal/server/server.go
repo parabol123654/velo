@@ -19,7 +19,7 @@ import (
 
 	"crypto/rand"
 
-	"github.com/velo-dev/velo/internal/db"
+	"github.com/parabol123654/velo/internal/db"
 )
 
 const (

@@ -1,4 +1,4 @@
-module github.com/velo-dev/velo
+module github.com/parabol123654/velo
 
 go 1.26.0
 

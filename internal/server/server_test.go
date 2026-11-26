@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velo-dev/velo/internal/db"
-	"github.com/velo-dev/velo/web"
+	"github.com/parabol123654/velo/internal/db"
+	"github.com/parabol123654/velo/web"
 )
 
 func newTestServer(t *testing.T) (*httptest.Server, *Server) {

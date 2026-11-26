@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/velo-dev/velo/internal/client"
-	"github.com/velo-dev/velo/internal/db"
-	"github.com/velo-dev/velo/internal/server"
-	"github.com/velo-dev/velo/web"
+	"github.com/parabol123654/velo/internal/client"
+	"github.com/parabol123654/velo/internal/db"
+	"github.com/parabol123654/velo/internal/server"
+	"github.com/parabol123654/velo/web"
 )
 
 func TestMCPStdioAgentWorkflow(t *testing.T) {
