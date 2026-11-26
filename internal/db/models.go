@@ -17,8 +17,33 @@ type APIToken struct {
 	UserID      string     `json:"user_id"`
 	Name        string     `json:"name"`
 	TokenPrefix string     `json:"token_prefix"`
+	Access      string     `json:"access"`       // "read" or "write"
+	ProjectIDs  []string   `json:"project_ids"`  // empty: every project
+	ProjectKeys []string   `json:"project_keys"` // for display; "(deleted)" for removed projects
 	CreatedAt   time.Time  `json:"created_at"`
 	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+}
+
+// AllowsProject reports whether the token may touch the project.
+func (t *APIToken) AllowsProject(projectID string) bool {
+	if len(t.ProjectIDs) == 0 {
+		return true
+	}
+	for _, id := range t.ProjectIDs {
+		if id == projectID {
+			return true
+		}
+	}
+	return false
+}
+
+// Restricted reports whether the token is limited to some projects.
+func (t *APIToken) Restricted() bool { return len(t.ProjectIDs) > 0 }
+
+// TokenScope limits what an API token can do. The zero value is full access.
+type TokenScope struct {
+	Access   string   `json:"access"`   // "read" or "write" (default)
+	Projects []string `json:"projects"` // project keys or IDs; empty means all
 }
 
 type Invite struct {
@@ -121,6 +146,7 @@ type Comment struct {
 	AuthorID   string    `json:"author_id"`
 	AuthorName string    `json:"author_name"`
 	Body       string    `json:"body"`
+	Via        string    `json:"via,omitempty"` // API token name when made through one
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
@@ -134,6 +160,7 @@ type Activity struct {
 	Field     string    `json:"field,omitempty"`
 	OldValue  string    `json:"old_value,omitempty"`
 	NewValue  string    `json:"new_value,omitempty"`
+	Via       string    `json:"via,omitempty"` // API token name when made through one
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -175,6 +202,7 @@ type UpdateIssueInput struct {
 
 type IssueFilter struct {
 	ProjectRef    string
+	ProjectIDs    []string // if set, only these projects (API token restriction)
 	StateID       string
 	StateCategory string
 	CycleID       string // ID or name, or "none" for issues without a cycle

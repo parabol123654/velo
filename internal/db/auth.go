@@ -178,10 +178,27 @@ func (s *Store) DeleteSession(rawToken string) error {
 	return err
 }
 
-func (s *Store) CreateAPIToken(userID, name string) (string, *APIToken, error) {
+func (s *Store) CreateAPIToken(userID, name string, scope TokenScope) (string, *APIToken, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = "CLI / MCP Token"
+	}
+	if scope.Access == "" {
+		scope.Access = "write"
+	}
+	if scope.Access != "read" && scope.Access != "write" {
+		return "", nil, fmt.Errorf("%w: access must be read or write", ErrValidation)
+	}
+	projectIDs := []string{}
+	for _, ref := range scope.Projects {
+		if strings.TrimSpace(ref) == "" {
+			continue
+		}
+		p, err := s.GetProject(ref)
+		if err != nil {
+			return "", nil, fmt.Errorf("%w: unknown project %q", ErrValidation, ref)
+		}
+		projectIDs = append(projectIDs, p.ID)
 	}
 	raw := "velo_" + randomHex(20)
 	meta := &APIToken{
@@ -189,45 +206,95 @@ func (s *Store) CreateAPIToken(userID, name string) (string, *APIToken, error) {
 		UserID:      userID,
 		Name:        name,
 		TokenPrefix: raw[:12],
+		Access:      scope.Access,
+		ProjectIDs:  projectIDs,
 		CreatedAt:   nowUTC(),
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO api_tokens (id, user_id, name, token_prefix, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		meta.ID, meta.UserID, meta.Name, meta.TokenPrefix, hashToken(raw), meta.CreatedAt,
+		`INSERT INTO api_tokens (id, user_id, name, token_prefix, token_hash, access, project_ids, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		meta.ID, meta.UserID, meta.Name, meta.TokenPrefix, hashToken(raw), meta.Access, strings.Join(projectIDs, ","), meta.CreatedAt,
 	)
 	if err != nil {
+		return "", nil, err
+	}
+	if err := s.fillProjectKeys([]*APIToken{meta}); err != nil {
 		return "", nil, err
 	}
 	return raw, meta, nil
 }
 
-func (s *Store) GetUserByAPIToken(rawToken string) (*User, error) {
+func splitIDs(csv string) []string {
+	out := []string{}
+	for _, id := range strings.Split(csv, ",") {
+		if id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// fillProjectKeys sets ProjectKeys for display. A deleted project shows as
+// "(deleted)" so a restricted token never looks unrestricted.
+func (s *Store) fillProjectKeys(tokens []*APIToken) error {
+	keys := map[string]string{}
+	rows, err := s.db.Query(`SELECT id, key FROM projects`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, key string
+		if err := rows.Scan(&id, &key); err != nil {
+			return err
+		}
+		keys[id] = key
+	}
+	for _, t := range tokens {
+		t.ProjectKeys = []string{}
+		for _, id := range t.ProjectIDs {
+			k, ok := keys[id]
+			if !ok {
+				k = "(deleted)"
+			}
+			t.ProjectKeys = append(t.ProjectKeys, k)
+		}
+	}
+	return rows.Err()
+}
+
+// GetUserByAPIToken returns the token's user and the token itself, whose
+// scope the caller must enforce.
+func (s *Store) GetUserByAPIToken(rawToken string) (*User, *APIToken, error) {
 	rawToken = strings.TrimSpace(rawToken)
 	if rawToken == "" {
-		return nil, ErrUnauthorized
+		return nil, nil, ErrUnauthorized
 	}
 	h := hashToken(rawToken)
 	var u User
+	var t APIToken
+	var projectIDs string
 	err := s.db.QueryRow(
-		`SELECT u.id, u.email, u.name, u.role, u.created_at
+		`SELECT u.id, u.email, u.name, u.role, u.created_at, t.id, t.name, t.token_prefix, t.access, t.project_ids, t.created_at
 		 FROM api_tokens t
 		 JOIN users u ON u.id = t.user_id
 		 WHERE t.token_hash = ? AND u.disabled_at IS NULL`,
 		h,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.Role, &u.CreatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.Role, &u.CreatedAt, &t.ID, &t.Name, &t.TokenPrefix, &t.Access, &projectIDs, &t.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrUnauthorized
+		return nil, nil, ErrUnauthorized
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	t.UserID = u.ID
+	t.ProjectIDs = splitIDs(projectIDs)
 	_, _ = s.db.Exec(`UPDATE api_tokens SET last_used_at = ? WHERE token_hash = ?`, nowUTC(), h)
-	return &u, nil
+	return &u, &t, nil
 }
 
 func (s *Store) ListAPITokens(userID string) ([]APIToken, error) {
 	rows, err := s.db.Query(
-		`SELECT id, user_id, name, token_prefix, created_at, last_used_at
+		`SELECT id, user_id, name, token_prefix, access, project_ids, created_at, last_used_at
 		 FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC`,
 		userID,
 	)
@@ -239,17 +306,26 @@ func (s *Store) ListAPITokens(userID string) ([]APIToken, error) {
 	out := []APIToken{}
 	for rows.Next() {
 		var t APIToken
+		var projectIDs string
 		var lastUsed sql.NullTime
-		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &t.TokenPrefix, &t.CreatedAt, &lastUsed); err != nil {
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &t.TokenPrefix, &t.Access, &projectIDs, &t.CreatedAt, &lastUsed); err != nil {
 			return nil, err
 		}
+		t.ProjectIDs = splitIDs(projectIDs)
 		if lastUsed.Valid {
 			tm := lastUsed.Time
 			t.LastUsedAt = &tm
 		}
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	ptrs := make([]*APIToken, len(out))
+	for i := range out {
+		ptrs[i] = &out[i]
+	}
+	return out, s.fillProjectKeys(ptrs)
 }
 
 func (s *Store) DeleteAPIToken(userID, tokenID string) error {

@@ -15,7 +15,7 @@ These hold for every change. Breaking one needs an explicit decision, recorded h
 1. **One binary, one data directory.** The web UI is embedded with `embed.FS`. Data is `<data>/velo.db` (SQLite, WAL, FTS5) plus `<data>/uploads/`. No CGO (`modernc.org/sqlite`), no required external service.
 2. **Plain SQL.** Queries live in `internal/db/` on `database/sql`. No ORM.
 3. **One write path.** The web UI, the CLI and the MCP server all change data through the HTTP API, so validation is shared and every mutation reaches open browsers over SSE. The CLI and MCP never open the SQLite file.
-4. **Schema changes are additive and automatic.** `migrate()` runs the `CREATE ... IF NOT EXISTS` schema, then small idempotent steps for older databases (e.g. adding `users.disabled_at`). A v0.1 database must open in any later version.
+4. **Schema changes are additive and automatic.** `migrate()` runs the `CREATE ... IF NOT EXISTS` schema, then adds columns that older databases lack (`addColumn`). A v0.1 database must open in any later version.
 5. **Every change ships with a check:** `go test ./...`, `npm test` and `npm run build` in `web/`.
 
 ## Domain
@@ -41,6 +41,21 @@ These hold for every change. Breaking one needs an explicit decision, recorded h
 - **Disable:** login, sessions and API tokens stop working at once, and sessions are deleted. Tokens come back if the user is enabled again. History stays intact.
 - **Delete:** only for users with no history (created issues, comments, activity, uploads). Otherwise the API answers 409 and the admin disables instead.
 - **Guards:** an admin cannot change or delete their own account through these endpoints, and the last enabled admin cannot be demoted, disabled or deleted.
+- **Login throttling:** after 5 failed logins within 15 minutes from one client IP or for one email, further attempts (even correct ones) get 429 with `Retry-After` until 15 minutes after the first failure. A successful login clears the email's counter. Counters live in memory. The IP is the TCP peer, so behind a reverse proxy all clients share one counter.
+
+### API token scopes
+
+A token acts as its user, narrowed by its scope (set at creation, shown in Settings):
+
+- **Access:** `write` (default) or `read`. A read token may only use `GET`.
+- **Projects:** empty means every project. Otherwise the token only sees and changes those projects: lists, search and the SSE stream are filtered; requests for objects elsewhere get 403; creating or importing projects is refused. Deleting a listed project does not widen the token.
+- **Never with a token:** managing tokens, changing the password, and every admin endpoint, even for an admin's token.
+- Every authenticated route declares its token rule in `routes()` (`internal/server/scope.go`), so a new route cannot skip the check.
+- Attachments not yet linked to an issue are served to any signed-in caller; their random URL is the capability.
+
+### Attribution
+
+Comments and activities made through an API token record the token's name (`via`), shown as "via Claude Code" in the UI and CLI and included in the JSON and SSE payloads. Browser sessions record nothing, so people and agents can be told apart.
 
 ## Live updates
 
@@ -50,10 +65,11 @@ These hold for every change. Breaking one needs an explicit decision, recorded h
 | :-- | :-- | :-- |
 | `issue.created`, `issue.updated` | full issue | Upsert that card; refetch affected parent cards; debounced refetch of project and cycle counters |
 | `issue.deleted` | `{id, identifier}` | Remove the card, detach its sub-issues |
-| `comment.created` | comment | Increment the card's comment count |
+| `comment.created`, `comment.deleted` | comment, or `{id, issue_id}` | Adjust the card's comment count |
+| `comment.updated` | comment | Nothing on the board; an open drawer refreshes |
 | `project.*`, `state.updated`, `cycle.*`, `user.*` | object | Debounced full workspace reload |
 
-The board logic is the pure function `applyEvent` in `web/src/live.ts`. A slow client may miss events (the hub drops them when its buffer is full); the UI reloads once whenever the stream reconnects.
+Each event belongs to a project (user events to none); a project-restricted token's stream only gets its projects' events. The board logic is the pure function `applyEvent` in `web/src/live.ts`. A slow client may miss events (the hub drops them when its buffer is full); the UI reloads once whenever the stream reconnects.
 
 ## Integrations
 

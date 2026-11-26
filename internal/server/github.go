@@ -211,7 +211,7 @@ func (s *Server) applyGitRef(actorID, ref string, closeIt bool, dedupeKey, body 
 		if err != nil {
 			return err
 		}
-		s.hub.Broadcast("comment.created", cm)
+		s.hub.Broadcast("comment.created", iss.ProjectID, cm)
 	}
 
 	if !closeIt || iss.StateCategory == "completed" || iss.StateCategory == "canceled" {
@@ -225,6 +225,6 @@ func (s *Server) applyGitRef(actorID, ref string, closeIt bool, dedupeKey, body 
 	if err != nil {
 		return err
 	}
-	s.hub.Broadcast("issue.updated", updated)
+	s.hub.Broadcast("issue.updated", updated.ProjectID, updated)
 	return nil
 }

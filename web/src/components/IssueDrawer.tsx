@@ -415,7 +415,8 @@ export function IssueDrawer({
                 {activities.map((ac) => (
                   <div key={ac.id} className="flex items-center justify-between gap-2">
                     <span>
-                      <strong className="text-zinc-700 dark:text-zinc-300">{ac.actor_name}</strong>{' '}
+                      <strong className="text-zinc-700 dark:text-zinc-300">{ac.actor_name}</strong>
+                      {ac.via && <ViaBadge via={ac.via} />}{' '}
                       {ac.action === 'created'
                         ? 'created this issue'
                         : `changed ${ac.field} from "${ac.old_value || 'none'}" to "${ac.new_value || 'none'}"`}
@@ -441,7 +442,10 @@ export function IssueDrawer({
                   className="p-3.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/40"
                 >
                   <div className="flex items-center justify-between text-xs mb-1.5">
-                    <span className="font-semibold text-zinc-800 dark:text-zinc-200">{cm.author_name}</span>
+                    <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+                      {cm.author_name}
+                      {cm.via && <ViaBadge via={cm.via} />}
+                    </span>
                     <span className="flex items-center gap-2 text-zinc-400">
                       {new Date(cm.created_at).toLocaleString()}
                       {cm.updated_at !== cm.created_at && <span title={new Date(cm.updated_at).toLocaleString()}>(edited)</span>}
@@ -520,5 +524,17 @@ export function IssueDrawer({
         </div>
       </div>
     </div>
+  );
+}
+
+// ViaBadge marks a comment or change made through an API token, such as a coding agent.
+function ViaBadge({ via }: { via: string }) {
+  return (
+    <span
+      title={`Made through the API token "${via}"`}
+      className="ml-1.5 px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-600 dark:text-violet-400 text-[10px] font-medium"
+    >
+      via {via}
+    </span>
   );
 }

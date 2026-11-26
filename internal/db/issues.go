@@ -143,8 +143,8 @@ func (s *Store) CreateIssue(actorID string, in CreateIssueInput) (*Issue, error)
 	}
 
 	_, err = tx.Exec(
-		`INSERT INTO activities (id, issue_id, actor_id, action, created_at) VALUES (?, ?, ?, 'created', ?)`,
-		newID(), issueID, actorID, now,
+		`INSERT INTO activities (id, issue_id, actor_id, action, via, created_at) VALUES (?, ?, ?, 'created', ?, ?)`,
+		newID(), issueID, actorID, s.via, now,
 	)
 	if err != nil {
 		return nil, err
@@ -298,6 +298,16 @@ func (s *Store) ListIssues(f IssueFilter) ([]Issue, error) {
 		clauses = append(clauses, "i.project_id = ?")
 		args = append(args, proj.ID)
 	}
+	if f.ProjectIDs != nil {
+		marks := strings.TrimSuffix(strings.Repeat("?,", len(f.ProjectIDs)), ",")
+		if marks == "" {
+			marks = "NULL"
+		}
+		clauses = append(clauses, "i.project_id IN ("+marks+")")
+		for _, id := range f.ProjectIDs {
+			args = append(args, id)
+		}
+	}
 	if f.StateID != "" {
 		clauses = append(clauses, "(i.state_id = ? OR ws.name = ? COLLATE NOCASE)")
 		args = append(args, f.StateID, f.StateID)
@@ -370,7 +380,8 @@ func (s *Store) ListIssues(f IssueFilter) ([]Issue, error) {
 	return out, nil
 }
 
-func (s *Store) SearchIssues(query string, limit int) ([]Issue, error) {
+// SearchIssues runs a full-text search; projectIDs, when non-nil, limits it to those projects.
+func (s *Store) SearchIssues(query string, limit int, projectIDs []string) ([]Issue, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return []Issue{}, nil
@@ -378,7 +389,7 @@ func (s *Store) SearchIssues(query string, limit int) ([]Issue, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
-	return s.ListIssues(IssueFilter{Query: query, Limit: limit})
+	return s.ListIssues(IssueFilter{Query: query, Limit: limit, ProjectIDs: projectIDs})
 }
 
 func (s *Store) UpdateIssue(actorID, ref string, patch UpdateIssueInput) (*Issue, error) {
@@ -399,9 +410,9 @@ func (s *Store) UpdateIssue(actorID, ref string, patch UpdateIssueInput) (*Issue
 			return nil
 		}
 		_, err := tx.Exec(
-			`INSERT INTO activities (id, issue_id, actor_id, action, field, old_value, new_value, created_at)
-			 VALUES (?, ?, ?, 'updated', ?, ?, ?, ?)`,
-			newID(), cur.ID, actorID, field, oldVal, newVal, now,
+			`INSERT INTO activities (id, issue_id, actor_id, action, field, old_value, new_value, via, created_at)
+			 VALUES (?, ?, ?, 'updated', ?, ?, ?, ?, ?)`,
+			newID(), cur.ID, actorID, field, oldVal, newVal, s.via, now,
 		)
 		return err
 	}
@@ -549,8 +560,8 @@ func (s *Store) AddComment(authorID, issueRef, body string) (*Comment, error) {
 	now := nowUTC()
 	id := newID()
 	_, err = s.db.Exec(
-		`INSERT INTO comments (id, issue_id, author_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		id, iss.ID, authorID, body, now, now,
+		`INSERT INTO comments (id, issue_id, author_id, body, via, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, iss.ID, authorID, body, s.via, now, now,
 	)
 	if err != nil {
 		return nil, err
@@ -559,9 +570,9 @@ func (s *Store) AddComment(authorID, issueRef, body string) (*Comment, error) {
 
 	var cm Comment
 	err = s.db.QueryRow(`
-		SELECT c.id, c.issue_id, c.author_id, u.name, c.body, c.created_at, c.updated_at
+		SELECT c.id, c.issue_id, c.author_id, u.name, c.body, c.via, c.created_at, c.updated_at
 		FROM comments c JOIN users u ON u.id = c.author_id WHERE c.id = ?
-	`, id).Scan(&cm.ID, &cm.IssueID, &cm.AuthorID, &cm.AuthorName, &cm.Body, &cm.CreatedAt, &cm.UpdatedAt)
+	`, id).Scan(&cm.ID, &cm.IssueID, &cm.AuthorID, &cm.AuthorName, &cm.Body, &cm.Via, &cm.CreatedAt, &cm.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -570,7 +581,7 @@ func (s *Store) AddComment(authorID, issueRef, body string) (*Comment, error) {
 
 func (s *Store) ListComments(issueID string) ([]Comment, error) {
 	rows, err := s.db.Query(`
-		SELECT c.id, c.issue_id, c.author_id, u.name, c.body, c.created_at, c.updated_at
+		SELECT c.id, c.issue_id, c.author_id, u.name, c.body, c.via, c.created_at, c.updated_at
 		FROM comments c JOIN users u ON u.id = c.author_id
 		WHERE c.issue_id = ? ORDER BY c.created_at ASC
 	`, issueID)
@@ -582,7 +593,7 @@ func (s *Store) ListComments(issueID string) ([]Comment, error) {
 	out := []Comment{}
 	for rows.Next() {
 		var cm Comment
-		if err := rows.Scan(&cm.ID, &cm.IssueID, &cm.AuthorID, &cm.AuthorName, &cm.Body, &cm.CreatedAt, &cm.UpdatedAt); err != nil {
+		if err := rows.Scan(&cm.ID, &cm.IssueID, &cm.AuthorID, &cm.AuthorName, &cm.Body, &cm.Via, &cm.CreatedAt, &cm.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, cm)
@@ -592,7 +603,7 @@ func (s *Store) ListComments(issueID string) ([]Comment, error) {
 
 func (s *Store) ListActivities(issueID string) ([]Activity, error) {
 	rows, err := s.db.Query(`
-		SELECT a.id, a.issue_id, a.actor_id, u.name, a.action, a.field, a.old_value, a.new_value, a.created_at
+		SELECT a.id, a.issue_id, a.actor_id, u.name, a.action, a.field, a.old_value, a.new_value, a.via, a.created_at
 		FROM activities a JOIN users u ON u.id = a.actor_id
 		WHERE a.issue_id = ? ORDER BY a.created_at ASC
 	`, issueID)
@@ -604,7 +615,7 @@ func (s *Store) ListActivities(issueID string) ([]Activity, error) {
 	out := []Activity{}
 	for rows.Next() {
 		var ac Activity
-		if err := rows.Scan(&ac.ID, &ac.IssueID, &ac.ActorID, &ac.ActorName, &ac.Action, &ac.Field, &ac.OldValue, &ac.NewValue, &ac.CreatedAt); err != nil {
+		if err := rows.Scan(&ac.ID, &ac.IssueID, &ac.ActorID, &ac.ActorName, &ac.Action, &ac.Field, &ac.OldValue, &ac.NewValue, &ac.Via, &ac.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, ac)
@@ -658,9 +669,9 @@ func (s *Store) GetAttachment(id string) (*Attachment, error) {
 func (s *Store) getComment(id string) (*Comment, error) {
 	var cm Comment
 	err := s.db.QueryRow(`
-		SELECT c.id, c.issue_id, c.author_id, u.name, c.body, c.created_at, c.updated_at
+		SELECT c.id, c.issue_id, c.author_id, u.name, c.body, c.via, c.created_at, c.updated_at
 		FROM comments c JOIN users u ON u.id = c.author_id WHERE c.id = ?
-	`, id).Scan(&cm.ID, &cm.IssueID, &cm.AuthorID, &cm.AuthorName, &cm.Body, &cm.CreatedAt, &cm.UpdatedAt)
+	`, id).Scan(&cm.ID, &cm.IssueID, &cm.AuthorID, &cm.AuthorName, &cm.Body, &cm.Via, &cm.CreatedAt, &cm.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -743,4 +754,27 @@ func resolveCycle(q rowQuerier, projectID, raw string) (id, name string, err err
 		return "", "", fmt.Errorf("%w: cycle not found in project", ErrValidation)
 	}
 	return id, name, nil
+}
+
+// ProjectIDOf returns the project that owns an object, for API token checks.
+// kind is one of state, label, cycle, comment, attachment. An attachment not
+// yet linked to an issue returns "" (its unguessable URL is the capability).
+func (s *Store) ProjectIDOf(kind, id string) (string, error) {
+	queries := map[string]string{
+		"state":      `SELECT project_id FROM workflow_states WHERE id = ?`,
+		"label":      `SELECT project_id FROM labels WHERE id = ?`,
+		"cycle":      `SELECT project_id FROM cycles WHERE id = ?`,
+		"comment":    `SELECT i.project_id FROM comments c JOIN issues i ON i.id = c.issue_id WHERE c.id = ?`,
+		"attachment": `SELECT COALESCE(i.project_id, '') FROM attachments a LEFT JOIN issues i ON i.id = a.issue_id WHERE a.id = ?`,
+	}
+	q, ok := queries[kind]
+	if !ok {
+		return "", fmt.Errorf("unknown kind %q", kind)
+	}
+	var pid string
+	err := s.db.QueryRow(q, id).Scan(&pid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return pid, err
 }

@@ -26,7 +26,7 @@ func TestMCPStdioAgentWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rawTok, _, err := st.CreateAPIToken(admin.ID, "MCP Test")
+	rawTok, _, err := st.CreateAPIToken(admin.ID, "MCP Test", db.TokenScope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestMCPProjectToolsAndFriendlyRefs(t *testing.T) {
 	}
 	defer st.Close()
 	admin, _ := st.CreateFirstAdmin("agent@velo.dev", "Agent", "secret123")
-	rawTok, _, _ := st.CreateAPIToken(admin.ID, "MCP")
+	rawTok, _, _ := st.CreateAPIToken(admin.ID, "MCP", db.TokenScope{})
 	if _, err := st.CreateUserDirect("dev@velo.dev", "Dev", "secret123", "member"); err != nil {
 		t.Fatal(err)
 	}

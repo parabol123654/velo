@@ -46,7 +46,7 @@ func TestUserManagement(t *testing.T) {
 
 	// Disable blocks password, session and API token; enable restores token.
 	sess, _, _ := st.CreateSession(dev.ID, time.Hour)
-	tok, _, _ := st.CreateAPIToken(dev.ID, "cli")
+	tok, _, _ := st.CreateAPIToken(dev.ID, "cli", TokenScope{})
 	yes, no := true, false
 	u, err := st.UpdateUser(admin.ID, dev.ID, UpdateUserInput{Disabled: &yes})
 	if err != nil || u.DisabledAt == nil {
@@ -58,13 +58,13 @@ func TestUserManagement(t *testing.T) {
 	if _, err := st.GetUserBySession(sess); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("disabled session: %v", err)
 	}
-	if _, err := st.GetUserByAPIToken(tok); !errors.Is(err, ErrUnauthorized) {
+	if _, _, err := st.GetUserByAPIToken(tok); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("disabled token: %v", err)
 	}
 	if _, err := st.UpdateUser(admin.ID, dev.ID, UpdateUserInput{Disabled: &no}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.GetUserByAPIToken(tok); err != nil {
+	if _, _, err := st.GetUserByAPIToken(tok); err != nil {
 		t.Fatalf("re-enabled token: %v", err)
 	}
 

@@ -38,6 +38,7 @@ type Server struct {
 	hub        *SSEHub
 	staticFS   fs.FS
 	mux        *http.ServeMux
+	logins     *loginLimiter
 
 	// GitHubWebhookSecret enables POST /api/webhooks/github when non-empty.
 	GitHubWebhookSecret string
@@ -54,6 +55,7 @@ func New(store *db.Store, dataDir string, staticFS fs.FS) (*Server, error) {
 		hub:        NewSSEHub(),
 		staticFS:   staticFS,
 		mux:        http.NewServeMux(),
+		logins:     newLoginLimiter(),
 	}
 	s.routes()
 	return s, nil
@@ -103,34 +105,54 @@ func decodeJSON(r *http.Request, dst any) error {
 	return nil
 }
 
-func (s *Server) authenticateRequest(r *http.Request) (*db.User, error) {
+// authenticateRequest returns the caller and, when an API token was used, the token.
+func (s *Server) authenticateRequest(r *http.Request) (*db.User, *db.APIToken, error) {
 	if auth := strings.TrimSpace(r.Header.Get("Authorization")); strings.HasPrefix(strings.ToLower(auth), "bearer ") {
 		tok := strings.TrimSpace(auth[7:])
 		if strings.HasPrefix(tok, "vs_") {
-			return s.store.GetUserBySession(tok)
+			u, err := s.store.GetUserBySession(tok)
+			return u, nil, err
 		}
 		return s.store.GetUserByAPIToken(tok)
 	}
 	if c, err := r.Cookie(sessionCookieName); err == nil && c.Value != "" {
-		return s.store.GetUserBySession(c.Value)
+		u, err := s.store.GetUserBySession(c.Value)
+		return u, nil, err
 	}
-	return nil, db.ErrUnauthorized
+	return nil, nil, db.ErrUnauthorized
 }
 
-func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+// requireAuth authenticates the request and applies API token limits: a
+// read-only token may only use GET, and rule (see scope.go) covers projects.
+func (s *Server) requireAuth(rule tokenRule, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		u, err := s.authenticateRequest(r)
+		u, tok, err := s.authenticateRequest(r)
 		if err != nil {
 			writeErr(w, db.ErrUnauthorized)
 			return
 		}
 		ctx := context.WithValue(r.Context(), userCtxKey, u)
-		next(w, r.WithContext(ctx))
+		if tok != nil {
+			ctx = context.WithValue(ctx, tokenCtxKey, tok)
+		}
+		r = r.WithContext(ctx)
+		if tok != nil && tok.Access == "read" && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writeErr(w, forbidden("this token is read-only"))
+			return
+		}
+		if rule != nil {
+			if err := rule(r); err != nil {
+				writeErr(w, err)
+				return
+			}
+		}
+		next(w, r)
 	}
 }
 
+// requireAdmin allows signed-in admins only; API tokens never reach admin actions.
 func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
-	return s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+	return s.requireAuth(sessionOnly, func(w http.ResponseWriter, r *http.Request) {
 		if currentUser(r).Role != "admin" {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required"})
 			return
@@ -164,55 +186,55 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/webhooks/github", s.handleGitHubWebhook)
 
 	// SSE live stream
-	s.mux.HandleFunc("GET /api/events", s.requireAuth(s.hub.ServeHTTP))
+	s.mux.HandleFunc("GET /api/events", s.requireAuth(filtered, s.hub.ServeHTTP))
 
 	// Users, Tokens & Invites
-	s.mux.HandleFunc("GET /api/users", s.requireAuth(s.handleListUsers))
+	s.mux.HandleFunc("GET /api/users", s.requireAuth(filtered, s.handleListUsers))
 	s.mux.HandleFunc("POST /api/users", s.requireAdmin(s.handleCreateUser))
 	s.mux.HandleFunc("PATCH /api/users/{id}", s.requireAdmin(s.handleUpdateUser))
 	s.mux.HandleFunc("DELETE /api/users/{id}", s.requireAdmin(s.handleDeleteUser))
 	s.mux.HandleFunc("POST /api/users/{id}/password", s.requireAdmin(s.handleResetPassword))
-	s.mux.HandleFunc("POST /api/auth/password", s.requireAuth(s.handleChangePassword))
-	s.mux.HandleFunc("GET /api/tokens", s.requireAuth(s.handleListTokens))
-	s.mux.HandleFunc("POST /api/tokens", s.requireAuth(s.handleCreateToken))
-	s.mux.HandleFunc("DELETE /api/tokens/{id}", s.requireAuth(s.handleDeleteToken))
+	s.mux.HandleFunc("POST /api/auth/password", s.requireAuth(sessionOnly, s.handleChangePassword))
+	s.mux.HandleFunc("GET /api/tokens", s.requireAuth(sessionOnly, s.handleListTokens))
+	s.mux.HandleFunc("POST /api/tokens", s.requireAuth(sessionOnly, s.handleCreateToken))
+	s.mux.HandleFunc("DELETE /api/tokens/{id}", s.requireAuth(sessionOnly, s.handleDeleteToken))
 	s.mux.HandleFunc("GET /api/invites", s.requireAdmin(s.handleListInvites))
 	s.mux.HandleFunc("POST /api/invites", s.requireAdmin(s.handleCreateInvite))
 	s.mux.HandleFunc("DELETE /api/invites/{id}", s.requireAdmin(s.handleDeleteInvite))
 
 	// Projects, States, Labels, Cycles & Export/Import
-	s.mux.HandleFunc("GET /api/projects", s.requireAuth(s.handleListProjects))
-	s.mux.HandleFunc("POST /api/projects", s.requireAuth(s.handleCreateProject))
-	s.mux.HandleFunc("GET /api/projects/{ref}", s.requireAuth(s.handleGetProject))
-	s.mux.HandleFunc("PATCH /api/projects/{ref}", s.requireAuth(s.handleUpdateProject))
+	s.mux.HandleFunc("GET /api/projects", s.requireAuth(filtered, s.handleListProjects))
+	s.mux.HandleFunc("POST /api/projects", s.requireAuth(allProjects, s.handleCreateProject))
+	s.mux.HandleFunc("GET /api/projects/{ref}", s.requireAuth(s.inProject("project"), s.handleGetProject))
+	s.mux.HandleFunc("PATCH /api/projects/{ref}", s.requireAuth(s.inProject("project"), s.handleUpdateProject))
 	s.mux.HandleFunc("DELETE /api/projects/{ref}", s.requireAdmin(s.handleDeleteProject))
-	s.mux.HandleFunc("GET /api/projects/{ref}/states", s.requireAuth(s.handleListStates))
-	s.mux.HandleFunc("POST /api/projects/{ref}/states", s.requireAuth(s.handleCreateState))
-	s.mux.HandleFunc("PATCH /api/states/{id}", s.requireAuth(s.handleUpdateState))
-	s.mux.HandleFunc("GET /api/projects/{ref}/labels", s.requireAuth(s.handleListLabels))
-	s.mux.HandleFunc("POST /api/projects/{ref}/labels", s.requireAuth(s.handleCreateLabel))
-	s.mux.HandleFunc("DELETE /api/labels/{id}", s.requireAuth(s.handleDeleteLabel))
-	s.mux.HandleFunc("GET /api/projects/{ref}/cycles", s.requireAuth(s.handleListCycles))
-	s.mux.HandleFunc("POST /api/projects/{ref}/cycles", s.requireAuth(s.handleCreateCycle))
-	s.mux.HandleFunc("PATCH /api/cycles/{id}", s.requireAuth(s.handleUpdateCycle))
-	s.mux.HandleFunc("DELETE /api/cycles/{id}", s.requireAuth(s.handleDeleteCycle))
-	s.mux.HandleFunc("GET /api/projects/{ref}/export", s.requireAuth(s.handleExportProject))
-	s.mux.HandleFunc("POST /api/projects/import", s.requireAuth(s.handleImportProject))
+	s.mux.HandleFunc("GET /api/projects/{ref}/states", s.requireAuth(s.inProject("project"), s.handleListStates))
+	s.mux.HandleFunc("POST /api/projects/{ref}/states", s.requireAuth(s.inProject("project"), s.handleCreateState))
+	s.mux.HandleFunc("PATCH /api/states/{id}", s.requireAuth(s.inProject("state"), s.handleUpdateState))
+	s.mux.HandleFunc("GET /api/projects/{ref}/labels", s.requireAuth(s.inProject("project"), s.handleListLabels))
+	s.mux.HandleFunc("POST /api/projects/{ref}/labels", s.requireAuth(s.inProject("project"), s.handleCreateLabel))
+	s.mux.HandleFunc("DELETE /api/labels/{id}", s.requireAuth(s.inProject("label"), s.handleDeleteLabel))
+	s.mux.HandleFunc("GET /api/projects/{ref}/cycles", s.requireAuth(s.inProject("project"), s.handleListCycles))
+	s.mux.HandleFunc("POST /api/projects/{ref}/cycles", s.requireAuth(s.inProject("project"), s.handleCreateCycle))
+	s.mux.HandleFunc("PATCH /api/cycles/{id}", s.requireAuth(s.inProject("cycle"), s.handleUpdateCycle))
+	s.mux.HandleFunc("DELETE /api/cycles/{id}", s.requireAuth(s.inProject("cycle"), s.handleDeleteCycle))
+	s.mux.HandleFunc("GET /api/projects/{ref}/export", s.requireAuth(s.inProject("project"), s.handleExportProject))
+	s.mux.HandleFunc("POST /api/projects/import", s.requireAuth(allProjects, s.handleImportProject))
 
 	// Issues, Search, Comments, Activities & Attachments
-	s.mux.HandleFunc("GET /api/search", s.requireAuth(s.handleSearch))
-	s.mux.HandleFunc("GET /api/issues", s.requireAuth(s.handleListIssues))
-	s.mux.HandleFunc("POST /api/issues", s.requireAuth(s.handleCreateIssue))
-	s.mux.HandleFunc("GET /api/issues/{ref}", s.requireAuth(s.handleGetIssue))
-	s.mux.HandleFunc("PATCH /api/issues/{ref}", s.requireAuth(s.handleUpdateIssue))
-	s.mux.HandleFunc("DELETE /api/issues/{ref}", s.requireAuth(s.handleDeleteIssue))
-	s.mux.HandleFunc("GET /api/issues/{ref}/comments", s.requireAuth(s.handleListComments))
-	s.mux.HandleFunc("POST /api/issues/{ref}/comments", s.requireAuth(s.handleAddComment))
-	s.mux.HandleFunc("GET /api/issues/{ref}/activities", s.requireAuth(s.handleListActivities))
-	s.mux.HandleFunc("PATCH /api/comments/{id}", s.requireAuth(s.handleUpdateComment))
-	s.mux.HandleFunc("DELETE /api/comments/{id}", s.requireAuth(s.handleDeleteComment))
-	s.mux.HandleFunc("POST /api/attachments", s.requireAuth(s.handleUploadAttachment))
-	s.mux.HandleFunc("GET /api/attachments/{id}/{filename}", s.requireAuth(s.handleServeAttachment))
+	s.mux.HandleFunc("GET /api/search", s.requireAuth(filtered, s.handleSearch))
+	s.mux.HandleFunc("GET /api/issues", s.requireAuth(filtered, s.handleListIssues))
+	s.mux.HandleFunc("POST /api/issues", s.requireAuth(filtered, s.handleCreateIssue))
+	s.mux.HandleFunc("GET /api/issues/{ref}", s.requireAuth(s.inProject("issue"), s.handleGetIssue))
+	s.mux.HandleFunc("PATCH /api/issues/{ref}", s.requireAuth(s.inProject("issue"), s.handleUpdateIssue))
+	s.mux.HandleFunc("DELETE /api/issues/{ref}", s.requireAuth(s.inProject("issue"), s.handleDeleteIssue))
+	s.mux.HandleFunc("GET /api/issues/{ref}/comments", s.requireAuth(s.inProject("issue"), s.handleListComments))
+	s.mux.HandleFunc("POST /api/issues/{ref}/comments", s.requireAuth(s.inProject("issue"), s.handleAddComment))
+	s.mux.HandleFunc("GET /api/issues/{ref}/activities", s.requireAuth(s.inProject("issue"), s.handleListActivities))
+	s.mux.HandleFunc("PATCH /api/comments/{id}", s.requireAuth(s.inProject("comment"), s.handleUpdateComment))
+	s.mux.HandleFunc("DELETE /api/comments/{id}", s.requireAuth(s.inProject("comment"), s.handleDeleteComment))
+	s.mux.HandleFunc("POST /api/attachments", s.requireAuth(filtered, s.handleUploadAttachment))
+	s.mux.HandleFunc("GET /api/attachments/{id}/{filename}", s.requireAuth(s.inProject("attachment"), s.handleServeAttachment))
 
 	// Catch-all: 404 JSON for unknown /api/*, SPA static files otherwise
 	s.mux.HandleFunc("/", s.handleSPA)
@@ -224,7 +246,7 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	u, _ := s.authenticateRequest(r)
+	u, _, _ := s.authenticateRequest(r)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"has_users": has,
 		"user":      u,
@@ -264,11 +286,21 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	ipKey, emailKey := loginKeys(r, body.Email)
+	if wait := s.logins.retryAfter(ipKey, emailKey); wait > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many failed logins; try again later"})
+		return
+	}
 	u, err := s.store.AuthenticatePassword(body.Email, body.Password)
+	if errors.Is(err, db.ErrUnauthorized) {
+		s.logins.fail(ipKey, emailKey)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
+	s.logins.reset(emailKey)
 	tok, exp, err := s.store.CreateSession(u.ID, sessionTTL)
 	if err != nil {
 		writeErr(w, err)
@@ -362,7 +394,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if u.DisabledAt != nil {
 		s.hub.DisconnectUser(u.ID)
 	}
-	s.hub.Broadcast("user.updated", u)
+	s.hub.Broadcast("user.updated", "", u)
 	writeJSON(w, http.StatusOK, u)
 }
 
@@ -373,7 +405,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.hub.DisconnectUser(id)
-	s.hub.Broadcast("user.deleted", map[string]string{"id": id})
+	s.hub.Broadcast("user.deleted", "", map[string]string{"id": id})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -430,9 +462,10 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name string `json:"name"`
+		db.TokenScope
 	}
 	_ = decodeJSON(r, &body)
-	raw, meta, err := s.store.CreateAPIToken(currentUser(r).ID, body.Name)
+	raw, meta, err := s.store.CreateAPIToken(currentUser(r).ID, body.Name, body.TokenScope)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -479,6 +512,15 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	if t := currentToken(r); t != nil && t.Restricted() {
+		visible := projects[:0]
+		for _, p := range projects {
+			if t.AllowsProject(p.ID) {
+				visible = append(visible, p)
+			}
+		}
+		projects = visible
+	}
 	writeJSON(w, http.StatusOK, projects)
 }
 
@@ -497,7 +539,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	s.hub.Broadcast("project.created", p)
+	s.hub.Broadcast("project.created", p.ID, p)
 	writeJSON(w, http.StatusCreated, p)
 }
 
@@ -565,7 +607,7 @@ func (s *Server) handleCreateState(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	s.hub.Broadcast("project.updated", p)
+	s.hub.Broadcast("project.updated", p.ID, p)
 	writeJSON(w, http.StatusCreated, st)
 }
 
@@ -585,7 +627,7 @@ func (s *Server) handleUpdateState(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	s.hub.Broadcast("state.updated", st)
+	s.hub.Broadcast("state.updated", st.ProjectID, st)
 	writeJSON(w, http.StatusOK, st)
 }
 
@@ -669,7 +711,7 @@ func (s *Server) handleCreateCycle(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	s.hub.Broadcast("cycle.created", c)
+	s.hub.Broadcast("cycle.created", c.ProjectID, c)
 	writeJSON(w, http.StatusCreated, c)
 }
 
@@ -690,7 +732,7 @@ func (s *Server) handleUpdateCycle(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	s.hub.Broadcast("cycle.updated", c)
+	s.hub.Broadcast("cycle.updated", c.ProjectID, c)
 	writeJSON(w, http.StatusOK, c)
 }
 
@@ -727,14 +769,14 @@ func (s *Server) handleImportProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	s.hub.Broadcast("project.created", proj)
+	s.hub.Broadcast("project.created", proj.ID, proj)
 	writeJSON(w, http.StatusCreated, proj)
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	res, err := s.store.SearchIssues(q, limit)
+	res, err := s.store.SearchIssues(q, limit, allowedProjects(r))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -766,6 +808,7 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 		LabelID:       qv.Get("label"),
 		Query:         qv.Get("q"),
 		Limit:         limit,
+		ProjectIDs:    allowedProjects(r),
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -780,12 +823,18 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	iss, err := s.store.CreateIssue(currentUser(r).ID, in)
+	if p, err := s.store.GetProject(in.ProjectRef); err == nil {
+		if err := checkProject(r, p.ID); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+	iss, err := s.storeFor(r).CreateIssue(currentUser(r).ID, in)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	s.hub.Broadcast("issue.created", iss)
+	s.hub.Broadcast("issue.created", iss.ProjectID, iss)
 	writeJSON(w, http.StatusCreated, iss)
 }
 
@@ -822,12 +871,12 @@ func (s *Server) handleUpdateIssue(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	iss, err := s.store.UpdateIssue(currentUser(r).ID, r.PathValue("ref"), patch)
+	iss, err := s.storeFor(r).UpdateIssue(currentUser(r).ID, r.PathValue("ref"), patch)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	s.hub.Broadcast("issue.updated", iss)
+	s.hub.Broadcast("issue.updated", iss.ProjectID, iss)
 	writeJSON(w, http.StatusOK, iss)
 }
 
@@ -842,7 +891,7 @@ func (s *Server) handleDeleteIssue(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	s.hub.Broadcast("issue.deleted", map[string]string{"id": iss.ID, "identifier": iss.Identifier})
+	s.hub.Broadcast("issue.deleted", iss.ProjectID, map[string]string{"id": iss.ID, "identifier": iss.Identifier})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -868,12 +917,12 @@ func (s *Server) handleAddComment(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	cm, err := s.store.AddComment(currentUser(r).ID, r.PathValue("ref"), body.Body)
+	cm, err := s.storeFor(r).AddComment(currentUser(r).ID, r.PathValue("ref"), body.Body)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	s.hub.Broadcast("comment.created", cm)
+	s.hub.Broadcast("comment.created", s.issueProject(cm.IssueID), cm)
 	writeJSON(w, http.StatusCreated, cm)
 }
 
@@ -890,7 +939,7 @@ func (s *Server) handleUpdateComment(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	s.hub.Broadcast("comment.updated", cm)
+	s.hub.Broadcast("comment.updated", s.issueProject(cm.IssueID), cm)
 	writeJSON(w, http.StatusOK, cm)
 }
 
@@ -900,7 +949,7 @@ func (s *Server) handleDeleteComment(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	s.hub.Broadcast("comment.deleted", map[string]string{"id": cm.ID, "issue_id": cm.IssueID})
+	s.hub.Broadcast("comment.deleted", s.issueProject(cm.IssueID), map[string]string{"id": cm.ID, "issue_id": cm.IssueID})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -918,7 +967,7 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	s.hub.Broadcast("project.updated", p)
+	s.hub.Broadcast("project.updated", p.ID, p)
 	writeJSON(w, http.StatusOK, p)
 }
 
@@ -928,17 +977,18 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	s.hub.Broadcast("project.deleted", map[string]string{"id": p.ID, "key": p.Key})
+	s.hub.Broadcast("project.deleted", p.ID, map[string]string{"id": p.ID, "key": p.Key})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleDeleteCycle(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	projectID, _ := s.store.ProjectIDOf("cycle", id)
 	if err := s.store.DeleteCycle(id); err != nil {
 		writeErr(w, err)
 		return
 	}
-	s.hub.Broadcast("cycle.deleted", map[string]string{"id": id})
+	s.hub.Broadcast("cycle.deleted", projectID, map[string]string{"id": id})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -989,6 +1039,18 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file exceeds 20MB limit or invalid multipart"})
 		return
+	}
+	// A token may only attach to issues in its projects; check before writing the file.
+	if id := strings.TrimSpace(r.FormValue("issue_id")); id != "" {
+		iss, err := s.store.GetIssue(id)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if err := checkProject(r, iss.ProjectID); err != nil {
+			writeErr(w, err)
+			return
+		}
 	}
 	file, hdr, err := r.FormFile("file")
 	if err != nil {
@@ -1089,4 +1151,13 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(indexBytes)
+}
+
+// issueProject returns the project of an issue for scoping SSE events.
+func (s *Server) issueProject(issueID string) string {
+	iss, err := s.store.GetIssue(issueID)
+	if err != nil {
+		return hiddenProject
+	}
+	return iss.ProjectID
 }

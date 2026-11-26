@@ -97,6 +97,7 @@ export interface Comment {
   author_id: string;
   author_name: string;
   body: string;
+  via?: string; // API token name when posted through one (e.g. an agent)
   created_at: string;
   updated_at: string;
 }
@@ -110,6 +111,7 @@ export interface Activity {
   field?: string;
   old_value?: string;
   new_value?: string;
+  via?: string;
   created_at: string;
 }
 
@@ -118,6 +120,8 @@ export interface APIToken {
   user_id: string;
   name: string;
   token_prefix: string;
+  access: 'read' | 'write';
+  project_keys: string[]; // empty: every project
   created_at: string;
   last_used_at?: string;
 }
@@ -193,10 +197,10 @@ export const api = {
     }),
 
   listTokens: () => req<APIToken[]>('/api/tokens'),
-  createToken: (name: string) =>
+  createToken: (name: string, access: 'read' | 'write', projects: string[]) =>
     req<{ token: string; token_meta: APIToken }>('/api/tokens', {
       method: 'POST',
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, access, projects }),
     }),
   deleteToken: (id: string) => req<{ ok: boolean }>(`/api/tokens/${id}`, { method: 'DELETE' }),
 
@@ -319,6 +323,12 @@ export const api = {
 // user (even if disabled) so an existing assignment still shows its name.
 export function assignableUsers(users: User[], selectedId?: string): User[] {
   return users.filter((u) => !u.disabled_at || u.id === selectedId);
+}
+
+// tokenScopeLabel describes what an API token may do, e.g. "read · DEV, OPS".
+export function tokenScopeLabel(t: Pick<APIToken, 'access' | 'project_keys'>): string {
+  const projects = t.project_keys.length ? t.project_keys.join(', ') : 'all projects';
+  return `${t.access} · ${projects}`;
 }
 
 export const PRIORITIES = [

@@ -92,7 +92,7 @@ func TestEditAndDeleteEndpoints(t *testing.T) {
 	if _, err := srv.store.GetIssue("DEV-1"); err != db.ErrNotFound {
 		t.Fatalf("issue survived project delete: %v", err)
 	}
-	if res, err := srv.store.SearchIssues("one", 10); err != nil || len(res) != 0 {
+	if res, err := srv.store.SearchIssues("one", 10, nil); err != nil || len(res) != 0 {
 		t.Fatalf("search index kept deleted issues: %v %v", res, err)
 	}
 }

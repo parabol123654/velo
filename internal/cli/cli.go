@@ -424,7 +424,7 @@ func runIssue(args []string) error {
 		if len(d.Comments) > 0 {
 			fmt.Println("\nComments:")
 			for _, cm := range d.Comments {
-				fmt.Printf("  @%s (%s): %s\n", cm.AuthorName, cm.CreatedAt.Format("2006-01-02 15:04"), cm.Body)
+				fmt.Printf("  @%s%s (%s): %s\n", cm.AuthorName, viaSuffix(cm.Via), cm.CreatedAt.Format("2006-01-02 15:04"), cm.Body)
 			}
 		}
 		if len(d.Activities) > 0 {
@@ -434,7 +434,7 @@ func runIssue(args []string) error {
 				if a.Field != "" {
 					line = fmt.Sprintf("%s: %s → %s", a.Field, valueOrDash(a.OldValue), valueOrDash(a.NewValue))
 				}
-				fmt.Printf("  %s @%s %s\n", a.CreatedAt.Format("2006-01-02 15:04"), a.ActorName, line)
+				fmt.Printf("  %s @%s%s %s\n", a.CreatedAt.Format("2006-01-02 15:04"), a.ActorName, viaSuffix(a.Via), line)
 			}
 		}
 		return nil
@@ -738,4 +738,12 @@ func runBackup(args []string) error {
 	fmt.Printf("Backed up %s to %s (uploads are files in %s; copy that folder too)\n",
 		dbPath, out, filepath.Join(*dataDir, "uploads"))
 	return nil
+}
+
+// viaSuffix marks changes made through an API token, e.g. " (via Claude Code)".
+func viaSuffix(via string) string {
+	if via == "" {
+		return ""
+	}
+	return " (via " + via + ")"
 }

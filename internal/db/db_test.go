@@ -59,11 +59,11 @@ func TestAuthAndInviteLifecycle(t *testing.T) {
 		t.Fatalf("GetUserBySession: %v", err)
 	}
 
-	rawAPI, meta, err := st.CreateAPIToken(admin.ID, "Antigravity MCP")
+	rawAPI, meta, err := st.CreateAPIToken(admin.ID, "Antigravity MCP", TokenScope{})
 	if err != nil || !strings.HasPrefix(rawAPI, "velo_") || meta.Name != "Antigravity MCP" {
 		t.Fatalf("CreateAPIToken failed: %v", err)
 	}
-	uTok, err := st.GetUserByAPIToken(rawAPI)
+	uTok, _, err := st.GetUserByAPIToken(rawAPI)
 	if err != nil || uTok.ID != admin.ID {
 		t.Fatalf("GetUserByAPIToken failed: %v", err)
 	}
@@ -167,11 +167,11 @@ func TestConcurrentIssuesFTSAndExportImport(t *testing.T) {
 	}
 
 	// FTS5 search including hyphenated identifier & keyword
-	hits, err := st.SearchIssues("Envoy routing", 20)
+	hits, err := st.SearchIssues("Envoy routing", 20, nil)
 	if err != nil || len(hits) != total {
 		t.Fatalf("FTS5 search 'Envoy routing' expected %d hits, got %d (%v)", total, len(hits), err)
 	}
-	idHits, err := st.SearchIssues("DEV-1", 5)
+	idHits, err := st.SearchIssues("DEV-1", 5, nil)
 	if err != nil || len(idHits) == 0 {
 		t.Fatalf("FTS5 search 'DEV-1' expected hits, got %d (%v)", len(idHits), err)
 	}
@@ -215,5 +215,30 @@ func TestBackupTo(t *testing.T) {
 	defer copyStore.Close()
 	if has, err := copyStore.HasUsers(); err != nil || !has {
 		t.Fatalf("backup lacks data: %v %v", has, err)
+	}
+}
+
+func TestTokenScopeStore(t *testing.T) {
+	st := newTestStore(t)
+	admin, _ := st.CreateFirstAdmin("admin@velo.local", "Admin", "secret123")
+	p, _ := st.CreateProject("DEV", "Dev", "")
+	if _, _, err := st.CreateAPIToken(admin.ID, "x", TokenScope{Access: "root"}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("bad access: %v", err)
+	}
+	raw, meta, err := st.CreateAPIToken(admin.ID, "agent", TokenScope{Access: "read", Projects: []string{"dev"}})
+	if err != nil || meta.Access != "read" || len(meta.ProjectIDs) != 1 || meta.ProjectKeys[0] != "DEV" {
+		t.Fatalf("scoped token: %+v %v", meta, err)
+	}
+	// Deleting the project must not turn the token into an unrestricted one.
+	if _, err := st.DeleteProject(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, tok, err := st.GetUserByAPIToken(raw)
+	if err != nil || !tok.Restricted() || tok.AllowsProject("anything") {
+		t.Fatalf("token after project delete: %+v %v", tok, err)
+	}
+	list, _ := st.ListAPITokens(admin.ID)
+	if len(list) != 1 || list[0].ProjectKeys[0] != "(deleted)" {
+		t.Fatalf("listed keys: %+v", list)
 	}
 }

@@ -24,6 +24,17 @@ var (
 
 type Store struct {
 	db *sql.DB
+	// via names the API token behind the current writes ("" for browser
+	// sessions); recorded on comments and activities. Set with Via.
+	via string
+}
+
+// Via returns a Store whose comments and activities record the given API
+// token name, so people can tell which changes an agent made.
+func (s *Store) Via(tokenName string) *Store {
+	c := *s
+	c.via = tokenName
+	return &c
 }
 
 func Open(dbPath string) (*Store, error) {
@@ -118,6 +129,8 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 	name         TEXT NOT NULL,
 	token_prefix TEXT NOT NULL,
 	token_hash   TEXT NOT NULL UNIQUE,
+	access       TEXT NOT NULL DEFAULT 'write',
+	project_ids  TEXT NOT NULL DEFAULT '',
 	last_used_at DATETIME,
 	created_at   DATETIME NOT NULL
 );
@@ -231,6 +244,7 @@ CREATE TABLE IF NOT EXISTS comments (
 	issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
 	author_id  TEXT NOT NULL REFERENCES users(id),
 	body       TEXT NOT NULL,
+	via        TEXT NOT NULL DEFAULT '',
 	created_at DATETIME NOT NULL,
 	updated_at DATETIME NOT NULL
 );
@@ -244,6 +258,7 @@ CREATE TABLE IF NOT EXISTS activities (
 	field      TEXT NOT NULL DEFAULT '',
 	old_value  TEXT NOT NULL DEFAULT '',
 	new_value  TEXT NOT NULL DEFAULT '',
+	via        TEXT NOT NULL DEFAULT '',
 	created_at DATETIME NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_activities_issue ON activities(issue_id, created_at);
@@ -265,15 +280,30 @@ func (s *Store) migrate() error {
 	if _, err := s.db.Exec(schemaSQL); err != nil {
 		return err
 	}
-	// v0.2: users.disabled_at (databases created by v0.1 lack it).
-	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name = 'disabled_at'`).Scan(&n); err != nil {
-		return err
-	}
-	if n == 0 {
-		if _, err := s.db.Exec(`ALTER TABLE users ADD COLUMN disabled_at DATETIME`); err != nil {
+	// Columns added after v0.1; older databases get them here.
+	for _, c := range []struct{ table, column, def string }{
+		{"users", "disabled_at", "DATETIME"},                      // v0.2
+		{"api_tokens", "access", "TEXT NOT NULL DEFAULT 'write'"}, // v0.3
+		{"api_tokens", "project_ids", "TEXT NOT NULL DEFAULT ''"}, // v0.3
+		{"comments", "via", "TEXT NOT NULL DEFAULT ''"},           // v0.3
+		{"activities", "via", "TEXT NOT NULL DEFAULT ''"},         // v0.3
+	} {
+		if err := s.addColumn(c.table, c.column, c.def); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// addColumn adds a column unless it already exists.
+func (s *Store) addColumn(table, column, def string) error {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, def))
+	return err
 }

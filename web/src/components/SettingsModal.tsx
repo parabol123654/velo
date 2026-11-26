@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { X, KeyRound, Users, Database, Copy, Check, Trash2, Download, Upload } from 'lucide-react';
-import { api, APIToken, Invite, Label, Project, User } from '../api';
+import { api, APIToken, Invite, Label, Project, tokenScopeLabel, User } from '../api';
 
 export function SettingsModal({
   open,
@@ -20,6 +20,9 @@ export function SettingsModal({
   const [tab, setTab] = useState<'mcp' | 'team' | 'data'>('mcp');
   const [tokens, setTokens] = useState<APIToken[]>([]);
   const [tokenName, setTokenName] = useState('Coding Agent MCP');
+  const [tokenAccess, setTokenAccess] = useState<'read' | 'write'>('write');
+  const [tokenProjects, setTokenProjects] = useState<string[]>([]); // empty: all projects
+  const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [newRawToken, setNewRawToken] = useState('');
   const [copied, setCopied] = useState(false);
 
@@ -41,6 +44,7 @@ export function SettingsModal({
   useEffect(() => {
     if (!open) return;
     void api.listTokens().then(setTokens);
+    void api.listProjects().then(setAllProjects);
     void api.listUsers().then(setUsers);
     if (currentUser.role === 'admin') {
       void api.listInvites().then(setInvites);
@@ -53,7 +57,7 @@ export function SettingsModal({
 
   const handleGenerateToken = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await api.createToken(tokenName);
+    const res = await api.createToken(tokenName, tokenAccess, tokenProjects);
     setNewRawToken(res.token);
     setTokens((prev) => [res.token_meta, ...prev]);
   };
@@ -195,6 +199,35 @@ export function SettingsModal({
                     Generate Token
                   </button>
                 </form>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mb-3 text-xs text-zinc-600 dark:text-zinc-300">
+                  <label className="flex items-center gap-1.5">
+                    Access
+                    <select
+                      value={tokenAccess}
+                      onChange={(e) => setTokenAccess(e.target.value as 'read' | 'write')}
+                      className="px-1.5 py-0.5 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent"
+                    >
+                      <option value="write">read & write</option>
+                      <option value="read">read only</option>
+                    </select>
+                  </label>
+                  <span className="text-zinc-400">Projects:</span>
+                  {allProjects.map((p) => (
+                    <label key={p.id} className="flex items-center gap-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={tokenProjects.includes(p.key)}
+                        onChange={(e) =>
+                          setTokenProjects((prev) =>
+                            e.target.checked ? [...prev, p.key] : prev.filter((k) => k !== p.key)
+                          )
+                        }
+                      />
+                      {p.key}
+                    </label>
+                  ))}
+                  <span className="text-zinc-400">{tokenProjects.length === 0 ? '(none checked = all projects)' : ''}</span>
+                </div>
 
                 {newRawToken && (
                   <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 mb-3">
@@ -223,6 +256,9 @@ export function SettingsModal({
                         <div>
                           <span className="font-medium text-zinc-800 dark:text-zinc-200">{t.name}</span>
                           <span className="ml-2 font-mono text-zinc-400">{t.token_prefix}...</span>
+                          <span className="ml-2 px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-500">
+                            {tokenScopeLabel(t)}
+                          </span>
                         </div>
                         <button
                           onClick={() =>

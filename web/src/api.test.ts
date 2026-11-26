@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assignableUsers, User } from './api';
+import { assignableUsers, tokenScopeLabel, User } from './api';
 
 const u = (id: string, disabled = false): User => ({
   id,
@@ -19,5 +19,12 @@ describe('assignableUsers', () => {
 
   it('keeps the selected user even when disabled', () => {
     expect(assignableUsers(team, 'b').map((x) => x.id)).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('tokenScopeLabel', () => {
+  it('names the access and the projects, or all projects', () => {
+    expect(tokenScopeLabel({ access: 'read', project_keys: ['DEV', 'OPS'] })).toBe('read · DEV, OPS');
+    expect(tokenScopeLabel({ access: 'write', project_keys: [] })).toBe('write · all projects');
   });
 });
