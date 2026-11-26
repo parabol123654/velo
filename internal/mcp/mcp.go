@@ -187,14 +187,18 @@ func dispatchTool(api *client.Client, name string, args map[string]any) (string,
 		if l := intPtrArg(args, "limit"); l != nil && *l > 0 {
 			limit = *l
 		}
-		issues, err := api.ListIssues(
-			strArg(args, "project"),
-			strArg(args, "state"),
-			strArg(args, "category"),
-			strArg(args, "query"),
-			intPtrArg(args, "priority"),
-			limit,
-		)
+		issues, err := api.ListIssues(client.IssueQuery{
+			Project:  strArg(args, "project"),
+			State:    strArg(args, "state"),
+			Category: strArg(args, "category"),
+			Query:    strArg(args, "query"),
+			Assignee: strArg(args, "assignee"),
+			Cycle:    strArg(args, "cycle"),
+			Label:    strArg(args, "label"),
+			Parent:   strArg(args, "parent"),
+			Priority: intPtrArg(args, "priority"),
+			Limit:    limit,
+		})
 		if err != nil {
 			return "", err
 		}
@@ -223,6 +227,8 @@ func dispatchTool(api *client.Client, name string, args map[string]any) (string,
 			Description: strArg(args, "description"),
 			StateID:     strArg(args, "state"),
 			Priority:    prio,
+			AssigneeID:  strArg(args, "assignee"),
+			CycleID:     strArg(args, "cycle"),
 			LabelIDs:    strSliceArg(args, "labels"),
 		})
 		if err != nil {
@@ -255,6 +261,14 @@ func dispatchTool(api *client.Client, name string, args map[string]any) (string,
 			s := strArg(args, "parent")
 			patch.ParentID = &s
 		}
+		if _, ok := args["assignee"]; ok {
+			s := strArg(args, "assignee")
+			patch.AssigneeID = &s
+		}
+		if _, ok := args["cycle"]; ok {
+			s := strArg(args, "cycle")
+			patch.CycleID = &s
+		}
 		if _, ok := args["labels"]; ok {
 			lbs := strSliceArg(args, "labels")
 			patch.LabelIDs = &lbs
@@ -283,6 +297,56 @@ func dispatchTool(api *client.Client, name string, args map[string]any) (string,
 		}
 		return toPrettyJSON(hits), nil
 
+	case "delete_issue":
+		ref := strArg(args, "ref")
+		if ref == "" {
+			return "", fmt.Errorf("ref is required (e.g. DEV-1)")
+		}
+		if err := api.DeleteIssue(ref); err != nil {
+			return "", err
+		}
+		return "Deleted " + ref, nil
+
+	case "get_project":
+		bundle, err := api.GetProject(strArg(args, "project"))
+		if err != nil {
+			return "", err
+		}
+		return toPrettyJSON(bundle), nil
+
+	case "list_users":
+		users, err := api.ListUsers()
+		if err != nil {
+			return "", err
+		}
+		return toPrettyJSON(users), nil
+
+	case "create_label":
+		lb, err := api.CreateLabel(strArg(args, "project"), strArg(args, "name"), strArg(args, "color"))
+		if err != nil {
+			return "", err
+		}
+		return toPrettyJSON(lb), nil
+
+	case "create_cycle":
+		cy, err := api.CreateCycle(strArg(args, "project"), strArg(args, "name"),
+			strArg(args, "start_date"), strArg(args, "end_date"), strArg(args, "status"))
+		if err != nil {
+			return "", err
+		}
+		return toPrettyJSON(cy), nil
+
+	case "export_project":
+		format := strArg(args, "format")
+		if format == "" {
+			format = "markdown"
+		}
+		out, err := api.ExportProject(strArg(args, "project"), format)
+		if err != nil {
+			return "", err
+		}
+		return string(out), nil
+
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
@@ -306,6 +370,10 @@ func toolDefinitions() []map[string]any {
 					"category": map[string]any{"type": "string", "description": "backlog, unstarted, started, completed, or canceled"},
 					"priority": map[string]any{"type": "integer", "description": "0=None, 1=Low, 2=Medium, 3=High, 4=Urgent"},
 					"query":    map[string]any{"type": "string", "description": "Optional FTS5 search text"},
+					"assignee": map[string]any{"type": "string", "description": "User email, \"me\", or \"none\" for unassigned"},
+					"cycle":    map[string]any{"type": "string", "description": "Cycle name, or \"none\" for issues without a cycle"},
+					"label":    map[string]any{"type": "string", "description": "Label name"},
+					"parent":   map[string]any{"type": "string", "description": "Parent identifier (e.g. DEV-1) to list its sub-issues, or \"root\" for top-level only"},
 					"limit":    map[string]any{"type": "integer", "description": "Max issues to return (default 30)"},
 				},
 			},
@@ -333,6 +401,8 @@ func toolDefinitions() []map[string]any {
 					"state":       map[string]any{"type": "string", "description": "Optional initial state name (default Todo)"},
 					"priority":    map[string]any{"type": "integer", "description": "0=None, 1=Low, 2=Medium, 3=High, 4=Urgent"},
 					"parent":      map[string]any{"type": "string", "description": "Optional parent issue identifier (e.g. DEV-1) to create a sub-issue"},
+					"assignee":    map[string]any{"type": "string", "description": "Optional assignee email, or \"me\""},
+					"cycle":       map[string]any{"type": "string", "description": "Optional cycle name"},
 					"labels":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Label names such as bug, feature"},
 				},
 				"required": []string{"project", "title"},
@@ -340,7 +410,7 @@ func toolDefinitions() []map[string]any {
 		},
 		{
 			"name":        "update_issue",
-			"description": "Update an existing issue's workflow state (e.g. 'In Progress', 'In Review', 'Done'), priority, title, description, or labels.",
+			"description": "Update an existing issue's workflow state (e.g. 'In Progress', 'In Review', 'Done'), priority, title, description, assignee, cycle, parent, or labels. Pass an empty string to clear assignee, cycle or parent.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -349,8 +419,10 @@ func toolDefinitions() []map[string]any {
 					"priority":    map[string]any{"type": "integer", "description": "0..4"},
 					"title":       map[string]any{"type": "string"},
 					"description": map[string]any{"type": "string"},
-					"parent":      map[string]any{"type": "string"},
-					"labels":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"parent":      map[string]any{"type": "string", "description": "Parent identifier (e.g. DEV-1)"},
+					"assignee":    map[string]any{"type": "string", "description": "User email or \"me\""},
+					"cycle":       map[string]any{"type": "string", "description": "Cycle name"},
+					"labels":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Full list of label names (replaces current labels)"},
 				},
 				"required": []string{"ref"},
 			},
@@ -377,6 +449,69 @@ func toolDefinitions() []map[string]any {
 					"limit": map[string]any{"type": "integer", "description": "Max results (default 20)"},
 				},
 				"required": []string{"query"},
+			},
+		},
+		{
+			"name":        "delete_issue",
+			"description": "Permanently delete an issue with its comments and activity. Sub-issues are kept and become top-level.",
+			"inputSchema": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"ref": map[string]any{"type": "string", "description": "Issue identifier (e.g. DEV-12)"}},
+				"required":   []string{"ref"},
+			},
+		},
+		{
+			"name":        "get_project",
+			"description": "Get a project with its workflow states, labels and cycles (names usable in other tools).",
+			"inputSchema": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"project": map[string]any{"type": "string", "description": "Project key (e.g. DEV)"}},
+				"required":   []string{"project"},
+			},
+		},
+		{
+			"name":        "list_users",
+			"description": "List workspace users (emails usable as assignee).",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+		{
+			"name":        "create_label",
+			"description": "Create a label in a project.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"project": map[string]any{"type": "string", "description": "Project key (e.g. DEV)"},
+					"name":    map[string]any{"type": "string"},
+					"color":   map[string]any{"type": "string", "description": "Optional hex color such as #ef4444"},
+				},
+				"required": []string{"project", "name"},
+			},
+		},
+		{
+			"name":        "create_cycle",
+			"description": "Create a cycle (sprint) in a project.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"project":    map[string]any{"type": "string", "description": "Project key (e.g. DEV)"},
+					"name":       map[string]any{"type": "string"},
+					"start_date": map[string]any{"type": "string", "description": "YYYY-MM-DD"},
+					"end_date":   map[string]any{"type": "string", "description": "YYYY-MM-DD"},
+					"status":     map[string]any{"type": "string", "description": "active (default), upcoming, or completed"},
+				},
+				"required": []string{"project", "name"},
+			},
+		},
+		{
+			"name":        "export_project",
+			"description": "Export a whole project as Markdown (readable summary) or JSON (full bundle).",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"project": map[string]any{"type": "string", "description": "Project key (e.g. DEV)"},
+					"format":  map[string]any{"type": "string", "description": "markdown (default) or json"},
+				},
+				"required": []string{"project"},
 			},
 		},
 	}

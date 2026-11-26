@@ -52,6 +52,10 @@ Create an API token in Settings, then:
 ./velo issue update DEV-1 --state "In Progress"
 ./velo issue comment DEV-1 "Reproduced locally."
 ./velo issue show DEV-1
+./velo issue update DEV-1 --assignee me --cycle "Sprint 1"
+./velo issue list --project DEV --assignee me
+./velo project show DEV                 # states, labels, cycles
+./velo project export DEV > DEV.md      # or --format json
 ./velo search "login"
 ```
 
@@ -76,7 +80,9 @@ Create an API token in Settings, then:
 }
 ```
 
-Tools: `list_projects`, `list_issues`, `get_issue`, `create_issue`, `update_issue`, `add_comment`, `search_issues`.
+Tools: `list_projects`, `get_project`, `list_users`, `list_issues`, `get_issue`, `create_issue`, `update_issue`, `delete_issue`, `add_comment`, `search_issues`, `create_label`, `create_cycle`, `export_project`.
+
+Assignees can be given as an email or `me`, cycles and labels by name, parents by identifier (`DEV-1`).
 
 Changes made through MCP or the CLI go through the same HTTP API as the web UI, so open boards update immediately.
 

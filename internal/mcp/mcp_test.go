@@ -89,3 +89,68 @@ func TestMCPStdioAgentWorkflow(t *testing.T) {
 		}
 	}
 }
+
+func TestMCPProjectToolsAndFriendlyRefs(t *testing.T) {
+	tmp := t.TempDir()
+	st, err := db.Open(filepath.Join(tmp, "velo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	admin, _ := st.CreateFirstAdmin("agent@velo.dev", "Agent", "secret123")
+	rawTok, _, _ := st.CreateAPIToken(admin.ID, "MCP")
+	if _, err := st.CreateUserDirect("dev@velo.dev", "Dev", "secret123", "member"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateProject("VELO", "Velo", ""); err != nil {
+		t.Fatal(err)
+	}
+	distFS, _ := web.DistFS()
+	srv, _ := server.New(st, tmp, distFS)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	api := client.New(ts.URL, rawTok)
+
+	// Each step: tool, arguments, text the result must contain.
+	steps := []struct{ tool, args, want string }{
+		{"create_label", `{"project":"VELO","name":"infra","color":"#ef4444"}`, `"infra"`},
+		{"create_cycle", `{"project":"VELO","name":"Sprint 1","start_date":"2026-12-01"}`, `"Sprint 1"`},
+		{"get_project", `{"project":"VELO"}`, `"Sprint 1"`},
+		{"list_users", `{}`, `dev@velo.dev`},
+		{"create_issue", `{"project":"VELO","title":"Parent","assignee":"me","cycle":"Sprint 1","labels":["infra"]}`, `"cycle_name": "Sprint 1"`},
+		{"create_issue", `{"project":"VELO","title":"Child","parent":"VELO-1"}`, `"parent_identifier": "VELO-1"`},
+		{"update_issue", `{"ref":"VELO-2","assignee":"dev@velo.dev"}`, `"assignee_name": "Dev"`},
+		{"list_issues", `{"project":"VELO","assignee":"me"}`, `"VELO-1"`},
+		{"list_issues", `{"project":"VELO","parent":"VELO-1"}`, `"VELO-2"`},
+		{"list_issues", `{"project":"VELO","cycle":"Sprint 1","label":"infra"}`, `"VELO-1"`},
+		{"update_issue", `{"ref":"VELO-1","cycle":"","assignee":""}`, `"identifier": "VELO-1"`},
+		{"export_project", `{"project":"VELO"}`, `VELO-2`},
+		{"export_project", `{"project":"VELO","format":"json"}`, `"identifier":"VELO-1"`},
+		{"delete_issue", `{"ref":"VELO-2"}`, `Deleted VELO-2`},
+	}
+	for _, s := range steps {
+		var args map[string]any
+		if err := json.Unmarshal([]byte(s.args), &args); err != nil {
+			t.Fatal(err)
+		}
+		text, err := dispatchTool(api, s.tool, args)
+		if err != nil {
+			t.Fatalf("%s %s: %v", s.tool, s.args, err)
+		}
+		if !strings.Contains(text, s.want) {
+			t.Fatalf("%s %s: result lacks %q:\n%s", s.tool, s.args, s.want, text)
+		}
+	}
+
+	// Cleared fields, and filters that must not match.
+	iss, _ := st.GetIssue("VELO-1")
+	if iss.CycleID != "" || iss.AssigneeID != "" {
+		t.Fatalf("clearing cycle/assignee failed: %+v", iss)
+	}
+	if text, _ := dispatchTool(api, "list_issues", map[string]any{"project": "VELO", "assignee": "dev@velo.dev"}); strings.Contains(text, "VELO-1") {
+		t.Fatalf("assignee filter leaked: %s", text)
+	}
+	if _, err := dispatchTool(api, "update_issue", map[string]any{"ref": "VELO-1", "cycle": "Nope"}); err == nil {
+		t.Fatal("unknown cycle name should fail")
+	}
+}

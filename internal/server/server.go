@@ -751,12 +751,16 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	limit, _ := strconv.Atoi(qv.Get("limit"))
+	assignee := qv.Get("assignee")
+	if strings.EqualFold(assignee, "me") {
+		assignee = currentUser(r).ID
+	}
 	issues, err := s.store.ListIssues(db.IssueFilter{
 		ProjectRef:    qv.Get("project"),
 		StateID:       qv.Get("state"),
 		StateCategory: qv.Get("category"),
 		CycleID:       qv.Get("cycle"),
-		AssigneeID:    qv.Get("assignee"),
+		AssigneeID:    assignee,
 		Priority:      prio,
 		ParentID:      qv.Get("parent"),
 		LabelID:       qv.Get("label"),

@@ -41,6 +41,12 @@ func Run(args []string) error {
 		return runIssue(args[1:])
 	case "search":
 		return runSearch(args[1:])
+	case "label", "labels":
+		return runLabel(args[1:])
+	case "cycle", "cycles":
+		return runCycle(args[1:])
+	case "user", "users":
+		return runUsers(args[1:])
 	case "mcp":
 		return runMCP(args[1:])
 	case "version", "-v", "--version":
@@ -64,11 +70,18 @@ Usage:
   velo login --token <velo_...> [--url ...]     Save API token & server URL to ~/.config/velo/config.json
   velo project list                             List projects
   velo project create <KEY> <NAME> [--desc ...] Create a new project
-  velo issue list [--project KEY] [--state ...] List issues
-  velo issue show <KEY-N>                       Show issue details & comments
-  velo issue create --project KEY --title ...   Create a new issue
-  velo issue update <KEY-N> [--state ...]       Update issue state, priority, title, or description
+  velo project show <KEY>                       Show states, labels and cycles
+  velo project export <KEY> [--format json]     Print project as Markdown (default) or JSON
+  velo project import <FILE.json>               Create a project from a JSON export
+  velo issue list [--project KEY] [--state ...] List issues (also --assignee, --cycle, --label, --parent, --priority)
+  velo issue show <KEY-N>                       Show issue details, sub-issues, comments & activity
+  velo issue create --project KEY --title ...   Create a new issue (--parent for a sub-issue)
+  velo issue update <KEY-N> [--state ...]       Update state, priority, title, desc, assignee, cycle, parent, labels
+  velo issue delete <KEY-N>                     Delete an issue
   velo issue comment <KEY-N> <BODY>             Add Markdown comment to an issue
+  velo label create --project KEY <NAME>        Create a label [--color #hex]
+  velo cycle create --project KEY <NAME>        Create a cycle [--start, --end, --status]
+  velo user list                                List users (emails work as --assignee; so does "me")
   velo search <QUERY>                           Instant FTS5 full-text search
   velo mcp [--url ...] [--token ...]            Start MCP server over stdio for AI coding agents
   velo version                                  Print version
@@ -225,6 +238,82 @@ func runProject(args []string) error {
 		fmt.Printf("Created project %s (%s)\n", p.Name, p.Key)
 		return nil
 	}
+	switch args[0] {
+	case "show":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: velo project show <KEY>")
+		}
+		fs := flag.NewFlagSet("project show", flag.ContinueOnError)
+		asJSON := fs.Bool("json", false, "Output raw JSON")
+		u := fs.String("url", "", "Velo server URL")
+		tok := fs.String("token", "", "API token")
+		if err := fs.Parse(args[2:]); err != nil {
+			return err
+		}
+		b, err := newAPIClient(*u, *tok).GetProject(args[1])
+		if err != nil {
+			return err
+		}
+		if *asJSON {
+			return printJSON(b)
+		}
+		fmt.Printf("%s — %s\n", b.Project.Key, b.Project.Name)
+		if b.Project.Description != "" {
+			fmt.Println(b.Project.Description)
+		}
+		fmt.Println("\nStates:")
+		for _, st := range b.States {
+			fmt.Printf("  %s (%s)\n", st.Name, st.Category)
+		}
+		fmt.Println("\nLabels:")
+		for _, lb := range b.Labels {
+			fmt.Printf("  %s %s\n", lb.Name, lb.Color)
+		}
+		fmt.Println("\nCycles:")
+		for _, cy := range b.Cycles {
+			fmt.Printf("  %s [%s] %s → %s\n", cy.Name, cy.Status, valueOrDash(cy.StartDate), valueOrDash(cy.EndDate))
+		}
+		return nil
+
+	case "export":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: velo project export <KEY> [--format markdown|json]")
+		}
+		fs := flag.NewFlagSet("project export", flag.ContinueOnError)
+		format := fs.String("format", "markdown", "markdown or json")
+		u := fs.String("url", "", "Velo server URL")
+		tok := fs.String("token", "", "API token")
+		if err := fs.Parse(args[2:]); err != nil {
+			return err
+		}
+		out, err := newAPIClient(*u, *tok).ExportProject(args[1], *format)
+		if err != nil {
+			return err
+		}
+		_, err = os.Stdout.Write(out)
+		return err
+
+	case "import":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: velo project import <FILE.json>")
+		}
+		fs := flag.NewFlagSet("project import", flag.ContinueOnError)
+		u := fs.String("url", "", "Velo server URL")
+		tok := fs.String("token", "", "API token")
+		if err := fs.Parse(args[2:]); err != nil {
+			return err
+		}
+		data, err := os.ReadFile(args[1])
+		if err != nil {
+			return err
+		}
+		p, err := newAPIClient(*u, *tok).ImportProject(data)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Imported project %s (%s)\n", p.Name, p.Key)
+		return nil
+	}
 	return fmt.Errorf("unknown project subcommand %q", args[0])
 }
 
@@ -250,6 +339,11 @@ func runIssue(args []string) error {
 		state := fs.String("state", "", "Filter by state name")
 		category := fs.String("category", "", "Filter by category")
 		q := fs.String("q", "", "Search text")
+		assignee := fs.String("assignee", "", "Assignee email, \"me\" or \"none\"")
+		cycle := fs.String("cycle", "", "Cycle name or \"none\"")
+		label := fs.String("label", "", "Label name")
+		parent := fs.String("parent", "", "Parent identifier (sub-issues) or \"root\"")
+		prio := fs.Int("priority", -1, "Priority 0..4")
 		limit := fs.Int("limit", 50, "Max results")
 		asJSON := fs.Bool("json", false, "Output raw JSON")
 		u := fs.String("url", "", "Velo server URL")
@@ -261,7 +355,15 @@ func runIssue(args []string) error {
 		if err := fs.Parse(subArgs); err != nil {
 			return err
 		}
-		issues, err := newAPIClient(*u, *tok).ListIssues(*project, *state, *category, *q, nil, *limit)
+		var prioFilter *int
+		if *prio >= 0 {
+			prioFilter = prio
+		}
+		issues, err := newAPIClient(*u, *tok).ListIssues(client.IssueQuery{
+			Project: *project, State: *state, Category: *category, Query: *q,
+			Assignee: *assignee, Cycle: *cycle, Label: *label, Parent: *parent,
+			Priority: prioFilter, Limit: *limit,
+		})
 		if err != nil {
 			return err
 		}
@@ -322,6 +424,16 @@ func runIssue(args []string) error {
 				fmt.Printf("  @%s (%s): %s\n", cm.AuthorName, cm.CreatedAt.Format("2006-01-02 15:04"), cm.Body)
 			}
 		}
+		if len(d.Activities) > 0 {
+			fmt.Println("\nActivity:")
+			for _, a := range d.Activities {
+				line := a.Action
+				if a.Field != "" {
+					line = fmt.Sprintf("%s: %s → %s", a.Field, valueOrDash(a.OldValue), valueOrDash(a.NewValue))
+				}
+				fmt.Printf("  %s @%s %s\n", a.CreatedAt.Format("2006-01-02 15:04"), a.ActorName, line)
+			}
+		}
 		return nil
 
 	case "create":
@@ -333,17 +445,14 @@ func runIssue(args []string) error {
 		prio := fs.Int("priority", 0, "Priority 0..4")
 		parent := fs.String("parent", "", "Parent issue identifier")
 		label := fs.String("label", "", "Comma-separated labels")
+		assignee := fs.String("assignee", "", "Assignee email or \"me\"")
+		cycle := fs.String("cycle", "", "Cycle name")
 		u := fs.String("url", "", "Velo server URL")
 		tok := fs.String("token", "", "API token")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
-		var labels []string
-		for _, part := range strings.Split(*label, ",") {
-			if s := strings.TrimSpace(part); s != "" {
-				labels = append(labels, s)
-			}
-		}
+		labels := splitList(*label)
 		iss, err := newAPIClient(*u, *tok).CreateIssue(db.CreateIssueInput{
 			ProjectRef:  *project,
 			ParentRef:   *parent,
@@ -351,6 +460,8 @@ func runIssue(args []string) error {
 			Description: *desc,
 			StateID:     *state,
 			Priority:    *prio,
+			AssigneeID:  *assignee,
+			CycleID:     *cycle,
 			LabelIDs:    labels,
 		})
 		if err != nil {
@@ -361,37 +472,67 @@ func runIssue(args []string) error {
 
 	case "update":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: velo issue update <KEY-N> [--state ...] [--priority ...] [--title ...] [--desc ...]")
+			return fmt.Errorf("usage: velo issue update <KEY-N> [--state ...] [--priority ...] [--title ...] [--desc ...] [--assignee ...] [--cycle ...] [--parent ...] [--label ...]")
 		}
 		ref := args[1]
 		fs := flag.NewFlagSet("issue update", flag.ContinueOnError)
 		state := fs.String("state", "", "New state name")
 		title := fs.String("title", "", "New title")
 		desc := fs.String("desc", "", "New description")
-		prio := fs.Int("priority", -1, "New priority 0..4")
+		prio := fs.Int("priority", 0, "New priority 0..4")
+		assignee := fs.String("assignee", "", "Assignee email or \"me\"; empty to unassign")
+		cycle := fs.String("cycle", "", "Cycle name; empty to clear")
+		parent := fs.String("parent", "", "Parent identifier; empty to make top-level")
+		label := fs.String("label", "", "Comma-separated labels (replaces current); empty to clear")
 		u := fs.String("url", "", "Velo server URL")
 		tok := fs.String("token", "", "API token")
 		if err := fs.Parse(args[2:]); err != nil {
 			return err
 		}
+		// Only flags given on the command line change the issue, so --assignee "" can clear a field.
 		var patch db.UpdateIssueInput
-		if *state != "" {
-			patch.StateID = state
-		}
-		if *title != "" {
-			patch.Title = title
-		}
-		if *desc != "" {
-			patch.Description = desc
-		}
-		if *prio >= 0 {
-			patch.Priority = prio
-		}
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "state":
+				patch.StateID = state
+			case "title":
+				patch.Title = title
+			case "desc":
+				patch.Description = desc
+			case "priority":
+				patch.Priority = prio
+			case "assignee":
+				patch.AssigneeID = assignee
+			case "cycle":
+				patch.CycleID = cycle
+			case "parent":
+				patch.ParentID = parent
+			case "label":
+				labels := splitList(*label)
+				patch.LabelIDs = &labels
+			}
+		})
 		iss, err := newAPIClient(*u, *tok).UpdateIssue(ref, patch)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Updated %s -> State: %s | Priority: %s\n", iss.Identifier, iss.StateName, priorityName(iss.Priority))
+		fmt.Printf("Updated %s -> State: %s | Priority: %s | Assignee: %s\n", iss.Identifier, iss.StateName, priorityName(iss.Priority), valueOrDash(iss.AssigneeName))
+		return nil
+
+	case "delete":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: velo issue delete <KEY-N>")
+		}
+		fs := flag.NewFlagSet("issue delete", flag.ContinueOnError)
+		u := fs.String("url", "", "Velo server URL")
+		tok := fs.String("token", "", "API token")
+		if err := fs.Parse(args[2:]); err != nil {
+			return err
+		}
+		if err := newAPIClient(*u, *tok).DeleteIssue(args[1]); err != nil {
+			return err
+		}
+		fmt.Printf("Deleted %s\n", args[1])
 		return nil
 
 	case "comment":
@@ -455,4 +596,116 @@ func valueOrDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+func splitList(csv string) []string {
+	out := []string{}
+	for _, part := range strings.Split(csv, ",") {
+		if s := strings.TrimSpace(part); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func printJSON(v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(b))
+	return nil
+}
+
+// parseWithName parses flags that may come before or after one positional NAME.
+func parseWithName(fs *flag.FlagSet, args []string) (string, error) {
+	var name string
+	for len(args) > 0 {
+		if err := fs.Parse(args); err != nil {
+			return "", err
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		if name != "" {
+			return "", fmt.Errorf("unexpected argument %q", rest[0])
+		}
+		name, args = rest[0], rest[1:]
+	}
+	return name, nil
+}
+
+func runLabel(args []string) error {
+	if len(args) == 0 || args[0] != "create" {
+		return fmt.Errorf("usage: velo label create --project KEY <NAME> [--color #hex] (list labels with: velo project show KEY)")
+	}
+	fs := flag.NewFlagSet("label create", flag.ContinueOnError)
+	project := fs.String("project", "", "Project key (required)")
+	color := fs.String("color", "", "Hex color such as #ef4444")
+	u := fs.String("url", "", "Velo server URL")
+	tok := fs.String("token", "", "API token")
+	name, err := parseWithName(fs, args[1:])
+	if err != nil {
+		return err
+	}
+	lb, err := newAPIClient(*u, *tok).CreateLabel(*project, name, *color)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Created label %s (%s)\n", lb.Name, lb.Color)
+	return nil
+}
+
+func runCycle(args []string) error {
+	if len(args) == 0 || args[0] != "create" {
+		return fmt.Errorf("usage: velo cycle create --project KEY <NAME> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--status active|upcoming|completed] (list cycles with: velo project show KEY)")
+	}
+	fs := flag.NewFlagSet("cycle create", flag.ContinueOnError)
+	project := fs.String("project", "", "Project key (required)")
+	start := fs.String("start", "", "Start date YYYY-MM-DD")
+	end := fs.String("end", "", "End date YYYY-MM-DD")
+	status := fs.String("status", "", "active (default), upcoming or completed")
+	u := fs.String("url", "", "Velo server URL")
+	tok := fs.String("token", "", "API token")
+	name, err := parseWithName(fs, args[1:])
+	if err != nil {
+		return err
+	}
+	cy, err := newAPIClient(*u, *tok).CreateCycle(*project, name, *start, *end, *status)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Created cycle %s [%s]\n", cy.Name, cy.Status)
+	return nil
+}
+
+func runUsers(args []string) error {
+	if len(args) > 0 && args[0] == "list" {
+		args = args[1:]
+	}
+	fs := flag.NewFlagSet("user list", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "Output raw JSON")
+	u := fs.String("url", "", "Velo server URL")
+	tok := fs.String("token", "", "API token")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	users, err := newAPIClient(*u, *tok).ListUsers()
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		return printJSON(users)
+	}
+	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "EMAIL\tNAME\tROLE\tSTATUS")
+	for _, usr := range users {
+		status := "active"
+		if usr.DisabledAt != nil {
+			status = "disabled"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", usr.Email, usr.Name, usr.Role, status)
+	}
+	return tw.Flush()
 }

@@ -97,34 +97,9 @@ func (c *Client) do(method, path string, in any, out any) error {
 		}
 		body = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, c.baseURL+path, body)
+	raw, err := c.doRaw(method, path, body)
 	if err != nil {
 		return err
-	}
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("request %s %s failed: %w", method, path, err)
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode >= 400 {
-		var apiErr struct {
-			Error string `json:"error"`
-		}
-		if json.Unmarshal(raw, &apiErr) == nil && apiErr.Error != "" {
-			return fmt.Errorf("API %d: %s", resp.StatusCode, apiErr.Error)
-		}
-		return fmt.Errorf("API %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	if out != nil && len(raw) > 0 {
 		if err := json.Unmarshal(raw, out); err != nil {
@@ -132,6 +107,40 @@ func (c *Client) do(method, path string, in any, out any) error {
 		}
 	}
 	return nil
+}
+
+// doRaw sends an optional JSON body and returns the raw response body.
+func (c *Client) doRaw(method, path string, body io.Reader) ([]byte, error) {
+	req, err := http.NewRequest(method, c.baseURL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request %s %s failed: %w", method, path, err)
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		var apiErr struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(raw, &apiErr) == nil && apiErr.Error != "" {
+			return nil, fmt.Errorf("API %d: %s", resp.StatusCode, apiErr.Error)
+		}
+		return nil, fmt.Errorf("API %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return raw, nil
 }
 
 func (c *Client) ListProjects() ([]db.Project, error) {
@@ -149,25 +158,31 @@ func (c *Client) CreateProject(key, name, description string) (*db.Project, erro
 	return &out, err
 }
 
-func (c *Client) ListIssues(project, state, category, query string, priority *int, limit int) ([]db.Issue, error) {
+// IssueQuery filters ListIssues. Empty fields are ignored. Assignee takes an
+// ID, email, "me" or "none"; Cycle an ID, name or "none"; Parent an ID,
+// identifier or "root"; Label an ID or name.
+type IssueQuery struct {
+	Project, State, Category, Query string
+	Assignee, Cycle, Label, Parent  string
+	Priority                        *int
+	Limit                           int
+}
+
+func (c *Client) ListIssues(f IssueQuery) ([]db.Issue, error) {
 	q := url.Values{}
-	if project != "" {
-		q.Set("project", project)
+	for k, v := range map[string]string{
+		"project": f.Project, "state": f.State, "category": f.Category, "q": f.Query,
+		"assignee": f.Assignee, "cycle": f.Cycle, "label": f.Label, "parent": f.Parent,
+	} {
+		if v != "" {
+			q.Set(k, v)
+		}
 	}
-	if state != "" {
-		q.Set("state", state)
+	if f.Priority != nil {
+		q.Set("priority", strconv.Itoa(*f.Priority))
 	}
-	if category != "" {
-		q.Set("category", category)
-	}
-	if query != "" {
-		q.Set("q", query)
-	}
-	if priority != nil {
-		q.Set("priority", strconv.Itoa(*priority))
-	}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
+	if f.Limit > 0 {
+		q.Set("limit", strconv.Itoa(f.Limit))
 	}
 	path := "/api/issues"
 	if enc := q.Encode(); enc != "" {
@@ -215,4 +230,56 @@ func (c *Client) SearchIssues(query string, limit int) ([]db.Issue, error) {
 	}
 	var out []db.Issue
 	return out, c.do("GET", "/api/search?"+q.Encode(), nil, &out)
+}
+
+func (c *Client) DeleteIssue(ref string) error {
+	return c.do("DELETE", "/api/issues/"+url.PathEscape(ref), nil, nil)
+}
+
+func (c *Client) ListUsers() ([]db.User, error) {
+	var out []db.User
+	return out, c.do("GET", "/api/users", nil, &out)
+}
+
+// ProjectBundle is a project with its workflow states, labels and cycles.
+type ProjectBundle struct {
+	Project db.Project         `json:"project"`
+	States  []db.WorkflowState `json:"states"`
+	Labels  []db.Label         `json:"labels"`
+	Cycles  []db.Cycle         `json:"cycles"`
+}
+
+func (c *Client) GetProject(ref string) (*ProjectBundle, error) {
+	var out ProjectBundle
+	return &out, c.do("GET", "/api/projects/"+url.PathEscape(ref), nil, &out)
+}
+
+func (c *Client) CreateLabel(project, name, color string) (*db.Label, error) {
+	var out db.Label
+	err := c.do("POST", "/api/projects/"+url.PathEscape(project)+"/labels",
+		map[string]string{"name": name, "color": color}, &out)
+	return &out, err
+}
+
+func (c *Client) CreateCycle(project, name, startDate, endDate, status string) (*db.Cycle, error) {
+	var out db.Cycle
+	err := c.do("POST", "/api/projects/"+url.PathEscape(project)+"/cycles", map[string]string{
+		"name": name, "start_date": startDate, "end_date": endDate, "status": status,
+	}, &out)
+	return &out, err
+}
+
+// ExportProject returns the project as Markdown ("markdown") or a JSON bundle ("json").
+func (c *Client) ExportProject(ref, format string) ([]byte, error) {
+	return c.doRaw("GET", "/api/projects/"+url.PathEscape(ref)+"/export?format="+url.QueryEscape(format), nil)
+}
+
+// ImportProject creates a project from a JSON bundle made by ExportProject.
+func (c *Client) ImportProject(bundle []byte) (*db.Project, error) {
+	raw, err := c.doRaw("POST", "/api/projects/import", bytes.NewReader(bundle))
+	if err != nil {
+		return nil, err
+	}
+	var out db.Project
+	return &out, json.Unmarshal(raw, &out)
 }

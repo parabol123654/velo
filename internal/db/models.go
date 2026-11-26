@@ -177,10 +177,10 @@ type IssueFilter struct {
 	ProjectRef    string
 	StateID       string
 	StateCategory string
-	CycleID       string // specific ID, or "none" for backlog unassigned to cycle
-	AssigneeID    string
+	CycleID       string // ID or name, or "none" for issues without a cycle
+	AssigneeID    string // ID or email, or "none"; the HTTP layer maps "me" to the caller
 	Priority      *int
-	ParentID      string // "root" for top-level only, specific ID, or "" for all
+	ParentID      string // "root" for top-level only, ID or identifier, or "" for all
 	LabelID       string
 	Query         string
 	Limit         int

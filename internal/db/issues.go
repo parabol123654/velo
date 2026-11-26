@@ -96,6 +96,14 @@ func (s *Store) CreateIssue(actorID string, in CreateIssueInput) (*Issue, error)
 	).Scan(&stateID); err != nil {
 		return nil, fmt.Errorf("%w: invalid workflow state", ErrValidation)
 	}
+	assigneeID, _, err := resolveAssignee(tx, actorID, in.AssigneeID)
+	if err != nil {
+		return nil, err
+	}
+	cycleID, _, err := resolveCycle(tx, proj.ID, in.CycleID)
+	if err != nil {
+		return nil, err
+	}
 
 	var seq int
 	if err := tx.QueryRow(
@@ -118,7 +126,7 @@ func (s *Store) CreateIssue(actorID string, in CreateIssueInput) (*Issue, error)
 			state_id, priority, assignee_id, creator_id, cycle_id, position, created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		issueID, proj.ID, seq, ident, nullStr(parentID), title, in.Description,
-		stateID, in.Priority, nullStr(in.AssigneeID), actorID, nullStr(in.CycleID), pos, now, now,
+		stateID, in.Priority, nullStr(assigneeID), actorID, nullStr(cycleID), pos, now, now,
 	)
 	if err != nil {
 		return nil, err
@@ -301,14 +309,14 @@ func (s *Store) ListIssues(f IssueFilter) ([]Issue, error) {
 	if f.CycleID == "none" {
 		clauses = append(clauses, "i.cycle_id IS NULL")
 	} else if f.CycleID != "" {
-		clauses = append(clauses, "i.cycle_id = ?")
-		args = append(args, f.CycleID)
+		clauses = append(clauses, "i.cycle_id IN (SELECT id FROM cycles WHERE id = ? OR name = ? COLLATE NOCASE)")
+		args = append(args, f.CycleID, f.CycleID)
 	}
 	if f.AssigneeID == "none" {
 		clauses = append(clauses, "i.assignee_id IS NULL")
 	} else if f.AssigneeID != "" {
-		clauses = append(clauses, "i.assignee_id = ?")
-		args = append(args, f.AssigneeID)
+		clauses = append(clauses, "i.assignee_id IN (SELECT id FROM users WHERE id = ? OR email = ? COLLATE NOCASE)")
+		args = append(args, f.AssigneeID, f.AssigneeID)
 	}
 	if f.Priority != nil {
 		clauses = append(clauses, "i.priority = ?")
@@ -317,8 +325,8 @@ func (s *Store) ListIssues(f IssueFilter) ([]Issue, error) {
 	if f.ParentID == "root" {
 		clauses = append(clauses, "i.parent_id IS NULL")
 	} else if f.ParentID != "" {
-		clauses = append(clauses, "i.parent_id = ?")
-		args = append(args, f.ParentID)
+		clauses = append(clauses, "i.parent_id IN (SELECT id FROM issues WHERE id = ? OR identifier = ? COLLATE NOCASE)")
+		args = append(args, f.ParentID, f.ParentID)
 	}
 	if f.LabelID != "" {
 		clauses = append(clauses, "EXISTS (SELECT 1 FROM issue_labels il JOIN labels lb ON lb.id = il.label_id WHERE il.issue_id = i.id AND (lb.id = ? OR lb.name = ? COLLATE NOCASE))")
@@ -444,12 +452,9 @@ func (s *Store) UpdateIssue(actorID, ref string, patch UpdateIssueInput) (*Issue
 
 	assigneeID := cur.AssigneeID
 	if patch.AssigneeID != nil {
-		assigneeID = strings.TrimSpace(*patch.AssigneeID)
 		var newName string
-		if assigneeID != "" {
-			if err := tx.QueryRow(`SELECT name FROM users WHERE id = ?`, assigneeID).Scan(&newName); err != nil {
-				return nil, fmt.Errorf("%w: assignee not found", ErrValidation)
-			}
+		if assigneeID, newName, err = resolveAssignee(tx, actorID, *patch.AssigneeID); err != nil {
+			return nil, err
 		}
 		if err := logActivity("assignee", cur.AssigneeName, newName); err != nil {
 			return nil, err
@@ -458,12 +463,9 @@ func (s *Store) UpdateIssue(actorID, ref string, patch UpdateIssueInput) (*Issue
 
 	cycleID := cur.CycleID
 	if patch.CycleID != nil {
-		cycleID = strings.TrimSpace(*patch.CycleID)
 		var newCycleName string
-		if cycleID != "" {
-			if err := tx.QueryRow(`SELECT name FROM cycles WHERE id = ? AND project_id = ?`, cycleID, cur.ProjectID).Scan(&newCycleName); err != nil {
-				return nil, fmt.Errorf("%w: cycle not found in project", ErrValidation)
-			}
+		if cycleID, newCycleName, err = resolveCycle(tx, cur.ProjectID, *patch.CycleID); err != nil {
+			return nil, err
 		}
 		if err := logActivity("cycle", cur.CycleName, newCycleName); err != nil {
 			return nil, err
@@ -703,4 +705,42 @@ func (s *Store) DeleteComment(actor *User, id string) (*Comment, error) {
 		return nil, err
 	}
 	return cm, nil
+}
+
+type rowQuerier interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// resolveAssignee accepts a user ID, an email, or "me" (the actor). Empty
+// means unassigned. Disabled users cannot be assigned.
+func resolveAssignee(q rowQuerier, actorID, raw string) (id, name string, err error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", nil
+	}
+	if strings.EqualFold(raw, "me") {
+		raw = actorID
+	}
+	err = q.QueryRow(
+		`SELECT id, name FROM users WHERE (id = ? OR email = ? COLLATE NOCASE) AND disabled_at IS NULL`, raw, raw,
+	).Scan(&id, &name)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: assignee not found or disabled", ErrValidation)
+	}
+	return id, name, nil
+}
+
+// resolveCycle accepts a cycle ID or name within the project. Empty means no cycle.
+func resolveCycle(q rowQuerier, projectID, raw string) (id, name string, err error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", nil
+	}
+	err = q.QueryRow(
+		`SELECT id, name FROM cycles WHERE project_id = ? AND (id = ? OR name = ? COLLATE NOCASE)`, projectID, raw, raw,
+	).Scan(&id, &name)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: cycle not found in project", ErrValidation)
+	}
+	return id, name, nil
 }
