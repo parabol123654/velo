@@ -21,13 +21,13 @@ type APIToken struct {
 }
 
 type Invite struct {
-	ID        string     `json:"id"`
-	Code      string     `json:"code"`
-	Role      string     `json:"role"`
-	CreatedBy string     `json:"created_by"`
-	UsedBy    *string    `json:"used_by,omitempty"`
-	ExpiresAt time.Time  `json:"expires_at"`
-	CreatedAt time.Time  `json:"created_at"`
+	ID        string    `json:"id"`
+	Code      string    `json:"code"`
+	Role      string    `json:"role"`
+	CreatedBy string    `json:"created_by"`
+	UsedBy    *string   `json:"used_by,omitempty"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Project struct {
@@ -205,11 +205,11 @@ type ExportIssue struct {
 }
 
 type ExportBundle struct {
-	Version     int             `json:"version"`
-	ExportedAt  time.Time       `json:"exported_at"`
-	Project     Project         `json:"project"`
-	States      []WorkflowState `json:"states"`
-	Labels      []Label         `json:"labels"`
-	Cycles      []Cycle         `json:"cycles"`
-	Issues      []ExportIssue   `json:"issues"`
+	Version    int             `json:"version"`
+	ExportedAt time.Time       `json:"exported_at"`
+	Project    Project         `json:"project"`
+	States     []WorkflowState `json:"states"`
+	Labels     []Label         `json:"labels"`
+	Cycles     []Cycle         `json:"cycles"`
+	Issues     []ExportIssue   `json:"issues"`
 }
