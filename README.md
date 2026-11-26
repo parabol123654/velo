@@ -99,6 +99,19 @@ With Docker: `docker exec <container> velo backup --data /data /data/backup.db`.
 
 Do not copy `velo.db` alone while the server runs: recent writes may still be in `velo.db-wal`.
 
+## Agent runner
+
+`velo agent` hands issues to a coding agent on your machine. Add the label `agent` to an issue on the board and the runner picks it up:
+
+```bash
+export VELO_URL=http://127.0.0.1:8080 VELO_TOKEN=velo_xxx   # a token just for the agent
+./velo agent --cmd 'claude -p {prompt}' --dir ~/code/myrepo
+```
+
+For each issue it claims the issue (assigned to you, moved to In Progress), runs the command with the `work_on_issue` prompt, and comments the exit code and the end of the output. `{prompt}` and `{issue}` are replaced inside arguments; without `{prompt}` the prompt is sent on stdin. The command runs without a shell, so issue text cannot inject commands. The command gets `VELO_URL`, `VELO_TOKEN` and `VELO_ISSUE`, so an agent with Velo's MCP server configured can tick checklist items and move the issue itself.
+
+One issue at a time. A failed or timed-out run leaves the issue assigned so it is not retried in a loop. Useful flags: `--label` (default `agent`), `--project`, `--timeout` (default 1h), `--once`, `--dry-run`.
+
 ## GitHub webhook
 
 Start Velo with a secret:

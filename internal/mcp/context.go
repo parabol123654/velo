@@ -253,3 +253,9 @@ func orNone(s string) string {
 	}
 	return s
 }
+
+// WorkOnIssuePrompt returns the work_on_issue prompt text for an issue; velo
+// agent hands it to the local coding agent.
+func WorkOnIssuePrompt(api *client.Client, ref string) (string, error) {
+	return prompts[0].build(api, map[string]string{"ref": ref})
+}

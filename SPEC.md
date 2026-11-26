@@ -80,6 +80,7 @@ Each event belongs to a project (user events to none); a project-restricted toke
 - **MCP (stdio):** tools `list_projects`, `get_project`, `list_users`, `list_issues`, `get_issue`, `create_issue`, `update_issue`, `delete_issue`, `next_issue`, `claim_issue`, `check_item`, `link_issues`, `unlink_issues`, `add_comment`, `search_issues`, `create_label`, `create_cycle`, `export_project`.
 - **MCP resources:** `velo://project/<KEY>` (listed) and `velo://issue/<KEY-N>` (template), as Markdown: an issue includes its links, sub-issues and comments.
 - **MCP prompts:** `work_on_issue` (claim → work → `check_item` → comment → review), `split_issue` (propose, then create sub-issues and `blocks` links), `summarize_cycle`. Each embeds the current issue or cycle so the agent starts with context.
+- **Agent runner (`velo agent`):** a client-side loop, never run by the server. It wakes on SSE events (and every `--poll`), takes `next` for its label/project, `claim`s it, runs `--cmd` with the `work_on_issue` prompt, and comments the result (exit code, duration, last ~3 KB of output). The command is split into arguments and executed without a shell; the prompt is passed as one argument (`{prompt}`) or on stdin. One run at a time; a failed, timed-out or interrupted run leaves the issue assigned to the agent, so it is never retried automatically. A failed claim waits for the next event instead of retrying.
 - **Friendly references:** wherever the API takes an assignee it also accepts an email or `me`; cycles accept a name; parent filters accept an identifier. Disabled users cannot be assigned.
 - **GitHub webhook:** `POST /api/webhooks/github`, enabled by `--github-secret` or `VELO_GITHUB_WEBHOOK_SECRET`. Commits and PRs that mention `KEY-N` get a comment. `Fixes`, `Closes` or `Resolves KEY-N` on the default branch (or a PR merged into it) moves the issue to the first completed state. Comments are posted as the user with the matching email, otherwise as a built-in "GitHub" user that cannot log in.
 
@@ -91,6 +92,7 @@ internal/db/      schema, migrations, queries
 internal/server/  HTTP API, auth, uploads, SSE hub, GitHub webhook
 internal/cli/     CLI commands
 internal/mcp/     MCP stdio server
-internal/client/  HTTP client shared by CLI and MCP
+internal/client/  HTTP client shared by CLI, MCP and the agent runner
+internal/agent/   velo agent: runs a local coding agent on labeled issues
 web/src/          React + TypeScript + Tailwind UI; live.ts holds the SSE reducer
 ```

@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -331,4 +332,25 @@ func (c *Client) CheckItem(ref, item string, index int, checked bool) (*db.Issue
 		"item": item, "index": index, "checked": checked,
 	}, &out)
 	return &out, err
+}
+
+// Events opens the server's SSE stream (GET /api/events). The caller reads
+// it until ctx ends or the server closes it, then closes the body.
+func (c *Client) Events(ctx context.Context) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/events", nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := (&http.Client{}).Do(req) // no timeout: the stream stays open
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("events: API %d", resp.StatusCode)
+	}
+	return resp.Body, nil
 }

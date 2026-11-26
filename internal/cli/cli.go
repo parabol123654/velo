@@ -15,6 +15,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/parabol123654/velo/internal/agent"
 	"github.com/parabol123654/velo/internal/client"
 	"github.com/parabol123654/velo/internal/db"
 	"github.com/parabol123654/velo/internal/mcp"
@@ -51,6 +52,8 @@ func Run(args []string) error {
 		return runMCP(args[1:])
 	case "backup":
 		return runBackup(args[1:])
+	case "agent":
+		return runAgent(args[1:])
 	case "version", "-v", "--version":
 		fmt.Printf("velo v%s\n", Version)
 		return nil
@@ -92,6 +95,7 @@ Usage:
   velo search <QUERY>                           Instant FTS5 full-text search
   velo mcp [--url ...] [--token ...]            Start MCP server over stdio for AI coding agents
   velo backup [--data ./data] <FILE.db>         Copy the database safely, even while serving
+  velo agent --cmd '<command>' [--label agent]  Run a local coding agent on issues labeled for it
   velo version                                  Print version
 `)
 }
@@ -857,4 +861,41 @@ func viaSuffix(via string) string {
 		return ""
 	}
 	return " (via " + via + ")"
+}
+
+func runAgent(args []string) error {
+	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
+	cmdLine := fs.String("cmd", "", `Command to run per issue, e.g. 'claude -p {prompt}'. {prompt} and {issue} are replaced; without {prompt} the prompt goes to stdin. Runs without a shell.`)
+	label := fs.String("label", "agent", `Only issues with this label ("" for any)`)
+	project := fs.String("project", "", "Only this project")
+	dir := fs.String("dir", ".", "Working directory for the command")
+	timeout := fs.Duration("timeout", time.Hour, "Stop a run after this long")
+	poll := fs.Duration("poll", time.Minute, "Also check for work this often")
+	once := fs.Bool("once", false, "Handle at most one issue, then exit")
+	dryRun := fs.Bool("dry-run", false, "Show the issue and command that would run; change nothing")
+	u := fs.String("url", "", "Velo server URL")
+	tok := fs.String("token", "", "API token (give the agent its own, limited to its projects)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	argv, err := agent.SplitCommand(*cmdLine)
+	if err != nil {
+		return err
+	}
+	if len(argv) == 0 {
+		return fmt.Errorf("usage: velo agent --cmd '<command>' [--label agent] [--project KEY] [--once] [--dry-run]")
+	}
+	cfg := client.LoadConfig(*u, *tok)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	who := "any label"
+	if *label != "" {
+		who = "label " + *label
+	}
+	fmt.Fprintf(os.Stderr, "velo agent: watching %s for issues with %s (Ctrl+C to stop)\n", cfg.URL, who)
+	return agent.Run(ctx, client.New(cfg.URL, cfg.Token), agent.Config{
+		Project: *project, Label: *label, Cmd: argv, Dir: *dir,
+		Timeout: *timeout, Poll: *poll, Once: *once, DryRun: *dryRun,
+		URL: cfg.URL, Token: cfg.Token,
+	}, os.Stderr)
 }
