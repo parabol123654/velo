@@ -561,3 +561,20 @@ func (s *Store) DeleteUser(actorID, userID string) error {
 	}
 	return nil
 }
+
+// DeleteInvite revokes an unused invite. Used invites are kept as a record.
+func (s *Store) DeleteInvite(id string) error {
+	var usedBy sql.NullString
+	err := s.db.QueryRow(`SELECT used_by FROM invites WHERE id = ?`, id).Scan(&usedBy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if usedBy.Valid {
+		return fmt.Errorf("%w: invite was already used", ErrConflict)
+	}
+	_, err = s.db.Exec(`DELETE FROM invites WHERE id = ?`, id)
+	return err
+}

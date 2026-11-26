@@ -50,6 +50,19 @@ export function applyEvent(issues: Issue[], ev: LiveEvent, projectId: string): L
         refetch: [],
       };
     }
+    case 'comment.deleted': {
+      const { issue_id } = ev.payload as { issue_id: string };
+      return {
+        issues: issues.map((it) =>
+          it.id === issue_id ? { ...it, comment_count: Math.max(0, it.comment_count - 1) } : it
+        ),
+        refreshMeta: false,
+        reload: false,
+        refetch: [],
+      };
+    }
+    case 'comment.updated':
+      return { issues, refreshMeta: false, reload: false, refetch: [] }; // cards show no comment text
     default:
       return { issues, refreshMeta: false, reload: true, refetch: [] };
   }

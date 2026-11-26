@@ -22,6 +22,7 @@ export function IssueDrawer({
   users,
   onClose,
   onSelectIssueRef,
+  currentUser,
 }: {
   issueRef: string | null;
   states: WorkflowState[];
@@ -30,6 +31,7 @@ export function IssueDrawer({
   users: User[];
   onClose: () => void;
   onSelectIssueRef: (ref: string) => void;
+  currentUser: User;
 }) {
   const [issue, setIssue] = useState<Issue | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -40,6 +42,8 @@ export function IssueDrawer({
   const [descDraft, setDescDraft] = useState('');
   const [subTitle, setSubTitle] = useState('');
   const [commentBody, setCommentBody] = useState('');
+  const [editingComment, setEditingComment] = useState<string | null>(null);
+  const [commentDraft, setCommentDraft] = useState('');
 
   const loadDetail = async (ref: string) => {
     const d = await api.getIssueDetail(ref);
@@ -94,6 +98,18 @@ export function IssueDrawer({
     await api.addComment(issue.identifier, commentBody);
     setCommentBody('');
     await loadDetail(issue.identifier);
+  };
+
+  const saveComment = async (id: string) => {
+    const updated = await api.updateComment(id, commentDraft);
+    setComments((prev) => prev.map((c) => (c.id === id ? updated : c)));
+    setEditingComment(null);
+  };
+
+  const removeComment = async (id: string) => {
+    if (!confirm('Delete this comment?')) return;
+    await api.deleteComment(id);
+    setComments((prev) => prev.filter((c) => c.id !== id));
   };
 
   const handleDelete = async () => {
@@ -407,9 +423,57 @@ export function IssueDrawer({
                 >
                   <div className="flex items-center justify-between text-xs mb-1.5">
                     <span className="font-semibold text-zinc-800 dark:text-zinc-200">{cm.author_name}</span>
-                    <span className="text-zinc-400">{new Date(cm.created_at).toLocaleString()}</span>
+                    <span className="flex items-center gap-2 text-zinc-400">
+                      {new Date(cm.created_at).toLocaleString()}
+                      {cm.updated_at !== cm.created_at && <span title={new Date(cm.updated_at).toLocaleString()}>(edited)</span>}
+                      {(cm.author_id === currentUser.id || currentUser.role === 'admin') && editingComment !== cm.id && (
+                        <>
+                          <button
+                            title="Edit comment"
+                            onClick={() => {
+                              setEditingComment(cm.id);
+                              setCommentDraft(cm.body);
+                            }}
+                            className="hover:text-zinc-700 dark:hover:text-zinc-200 cursor-pointer"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                          </button>
+                          <button
+                            title="Delete comment"
+                            onClick={() => void removeComment(cm.id)}
+                            className="hover:text-rose-500 cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </>
+                      )}
+                    </span>
                   </div>
-                  <MarkdownView content={cm.body} />
+                  {editingComment === cm.id ? (
+                    <div className="space-y-2">
+                      <MarkdownEditor
+                        value={commentDraft}
+                        onChange={setCommentDraft}
+                        rows={3}
+                        issueId={issue.id}
+                        onSubmitShortcut={() => void saveComment(cm.id)}
+                      />
+                      <div className="flex justify-end gap-2 text-xs">
+                        <button onClick={() => setEditingComment(null)} className="px-2.5 py-1 text-zinc-500 cursor-pointer">
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => void saveComment(cm.id)}
+                          disabled={!commentDraft.trim()}
+                          className="px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white cursor-pointer"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <MarkdownView content={cm.body} />
+                  )}
                 </div>
               ))}
             </div>

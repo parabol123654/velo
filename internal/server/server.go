@@ -89,6 +89,8 @@ func writeErr(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, db.ErrConflict):
 		status = http.StatusConflict
+	case errors.Is(err, db.ErrForbidden):
+		status = http.StatusForbidden
 	}
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
@@ -176,11 +178,14 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/tokens/{id}", s.requireAuth(s.handleDeleteToken))
 	s.mux.HandleFunc("GET /api/invites", s.requireAdmin(s.handleListInvites))
 	s.mux.HandleFunc("POST /api/invites", s.requireAdmin(s.handleCreateInvite))
+	s.mux.HandleFunc("DELETE /api/invites/{id}", s.requireAdmin(s.handleDeleteInvite))
 
 	// Projects, States, Labels, Cycles & Export/Import
 	s.mux.HandleFunc("GET /api/projects", s.requireAuth(s.handleListProjects))
 	s.mux.HandleFunc("POST /api/projects", s.requireAuth(s.handleCreateProject))
 	s.mux.HandleFunc("GET /api/projects/{ref}", s.requireAuth(s.handleGetProject))
+	s.mux.HandleFunc("PATCH /api/projects/{ref}", s.requireAuth(s.handleUpdateProject))
+	s.mux.HandleFunc("DELETE /api/projects/{ref}", s.requireAdmin(s.handleDeleteProject))
 	s.mux.HandleFunc("GET /api/projects/{ref}/states", s.requireAuth(s.handleListStates))
 	s.mux.HandleFunc("POST /api/projects/{ref}/states", s.requireAuth(s.handleCreateState))
 	s.mux.HandleFunc("PATCH /api/states/{id}", s.requireAuth(s.handleUpdateState))
@@ -190,6 +195,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/projects/{ref}/cycles", s.requireAuth(s.handleListCycles))
 	s.mux.HandleFunc("POST /api/projects/{ref}/cycles", s.requireAuth(s.handleCreateCycle))
 	s.mux.HandleFunc("PATCH /api/cycles/{id}", s.requireAuth(s.handleUpdateCycle))
+	s.mux.HandleFunc("DELETE /api/cycles/{id}", s.requireAuth(s.handleDeleteCycle))
 	s.mux.HandleFunc("GET /api/projects/{ref}/export", s.requireAuth(s.handleExportProject))
 	s.mux.HandleFunc("POST /api/projects/import", s.requireAuth(s.handleImportProject))
 
@@ -203,6 +209,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/issues/{ref}/comments", s.requireAuth(s.handleListComments))
 	s.mux.HandleFunc("POST /api/issues/{ref}/comments", s.requireAuth(s.handleAddComment))
 	s.mux.HandleFunc("GET /api/issues/{ref}/activities", s.requireAuth(s.handleListActivities))
+	s.mux.HandleFunc("PATCH /api/comments/{id}", s.requireAuth(s.handleUpdateComment))
+	s.mux.HandleFunc("DELETE /api/comments/{id}", s.requireAuth(s.handleDeleteComment))
 	s.mux.HandleFunc("POST /api/attachments", s.requireAuth(s.handleUploadAttachment))
 	s.mux.HandleFunc("GET /api/attachments/{id}/{filename}", s.requireAuth(s.handleServeAttachment))
 
@@ -863,6 +871,79 @@ func (s *Server) handleAddComment(w http.ResponseWriter, r *http.Request) {
 	}
 	s.hub.Broadcast("comment.created", cm)
 	writeJSON(w, http.StatusCreated, cm)
+}
+
+func (s *Server) handleUpdateComment(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Body string `json:"body"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, err)
+		return
+	}
+	cm, err := s.store.UpdateComment(currentUser(r), r.PathValue("id"), body.Body)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.Broadcast("comment.updated", cm)
+	writeJSON(w, http.StatusOK, cm)
+}
+
+func (s *Server) handleDeleteComment(w http.ResponseWriter, r *http.Request) {
+	cm, err := s.store.DeleteComment(currentUser(r), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.Broadcast("comment.deleted", map[string]string{"id": cm.ID, "issue_id": cm.IssueID})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, err)
+		return
+	}
+	p, err := s.store.UpdateProject(r.PathValue("ref"), body.Name, body.Description)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.Broadcast("project.updated", p)
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
+	p, err := s.store.DeleteProject(r.PathValue("ref"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.Broadcast("project.deleted", map[string]string{"id": p.ID, "key": p.Key})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleDeleteCycle(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.store.DeleteCycle(id); err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.Broadcast("cycle.deleted", map[string]string{"id": id})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleDeleteInvite(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeleteInvite(r.PathValue("id")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleListActivities(w http.ResponseWriter, r *http.Request) {

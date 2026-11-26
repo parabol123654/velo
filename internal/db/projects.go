@@ -378,3 +378,45 @@ func (s *Store) UpdateCycle(id, name, description, startDate, endDate, status st
 	}
 	return &c, nil
 }
+
+// UpdateProject renames a project or changes its description. The key is
+// fixed because it is part of every issue identifier.
+func (s *Store) UpdateProject(ref, name, description string) (*Project, error) {
+	p, err := s.GetProject(ref)
+	if err != nil {
+		return nil, err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("%w: project name is required", ErrValidation)
+	}
+	if _, err := s.db.Exec(`UPDATE projects SET name = ?, description = ? WHERE id = ?`, name, description, p.ID); err != nil {
+		return nil, err
+	}
+	return s.GetProject(p.ID)
+}
+
+// DeleteProject removes a project with all its issues, comments, states,
+// labels and cycles. Uploaded files stay on disk.
+func (s *Store) DeleteProject(ref string) (*Project, error) {
+	p, err := s.GetProject(ref)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.db.Exec(`DELETE FROM projects WHERE id = ?`, p.ID); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// DeleteCycle removes a cycle; its issues stay, with no cycle.
+func (s *Store) DeleteCycle(id string) error {
+	res, err := s.db.Exec(`DELETE FROM cycles WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

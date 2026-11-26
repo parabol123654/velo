@@ -14,6 +14,7 @@ import {
   MessageSquare,
   GitBranch,
   FolderPlus,
+  Trash2,
 } from 'lucide-react';
 import {
   api,
@@ -809,6 +810,17 @@ export function App() {
                           >
                             Open Board →
                           </button>
+                          <button
+                            title="Delete cycle (its issues stay)"
+                            onClick={() => {
+                              if (!confirm(`Delete cycle ${c.name}? Its issues stay, without a cycle.`)) return;
+                              if (filterCycle === c.id) setFilterCycle('');
+                              void api.deleteCycle(c.id);
+                            }}
+                            className="p-1.5 text-zinc-400 hover:text-rose-500 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       );
                     })
@@ -984,6 +996,7 @@ export function App() {
         users={users}
         onClose={() => setSelectedIssueRef(null)}
         onSelectIssueRef={setSelectedIssueRef}
+        currentUser={user}
       />
 
       <CommandPalette

@@ -652,3 +652,55 @@ func (s *Store) GetAttachment(id string) (*Attachment, error) {
 	att.URL = "/api/attachments/" + att.ID + "/" + att.Filename
 	return &att, nil
 }
+
+func (s *Store) getComment(id string) (*Comment, error) {
+	var cm Comment
+	err := s.db.QueryRow(`
+		SELECT c.id, c.issue_id, c.author_id, u.name, c.body, c.created_at, c.updated_at
+		FROM comments c JOIN users u ON u.id = c.author_id WHERE c.id = ?
+	`, id).Scan(&cm.ID, &cm.IssueID, &cm.AuthorID, &cm.AuthorName, &cm.Body, &cm.CreatedAt, &cm.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &cm, nil
+}
+
+// ownComment loads a comment the actor may change: their own, or any for admins.
+func (s *Store) ownComment(actor *User, id string) (*Comment, error) {
+	cm, err := s.getComment(id)
+	if err != nil {
+		return nil, err
+	}
+	if cm.AuthorID != actor.ID && actor.Role != "admin" {
+		return nil, fmt.Errorf("%w: only the author or an admin can change this comment", ErrForbidden)
+	}
+	return cm, nil
+}
+
+func (s *Store) UpdateComment(actor *User, id, body string) (*Comment, error) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return nil, fmt.Errorf("%w: comment body is required", ErrValidation)
+	}
+	if _, err := s.ownComment(actor, id); err != nil {
+		return nil, err
+	}
+	if _, err := s.db.Exec(`UPDATE comments SET body = ?, updated_at = ? WHERE id = ?`, body, nowUTC(), id); err != nil {
+		return nil, err
+	}
+	return s.getComment(id)
+}
+
+func (s *Store) DeleteComment(actor *User, id string) (*Comment, error) {
+	cm, err := s.ownComment(actor, id)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.db.Exec(`DELETE FROM comments WHERE id = ?`, id); err != nil {
+		return nil, err
+	}
+	return cm, nil
+}

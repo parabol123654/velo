@@ -30,6 +30,13 @@ export function SettingsModal({
   const [curPass, setCurPass] = useState('');
   const [newPass, setNewPass] = useState('');
   const [passMsg, setPassMsg] = useState('');
+  const [projName, setProjName] = useState('');
+  const [projDesc, setProjDesc] = useState('');
+
+  useEffect(() => {
+    setProjName(currentProject?.name ?? '');
+    setProjDesc(currentProject?.description ?? '');
+  }, [currentProject?.id, currentProject?.name, currentProject?.description]);
 
   useEffect(() => {
     if (!open) return;
@@ -377,12 +384,20 @@ export function SettingsModal({
                           {inv.used_by ? (
                             <span className="text-zinc-400">Used</span>
                           ) : (
-                            <button
-                              onClick={() => copyText(url)}
-                              className="text-indigo-500 hover:underline shrink-0 cursor-pointer"
-                            >
-                              Copy link
-                            </button>
+                            <span className="flex items-center gap-2 shrink-0">
+                              <button onClick={() => copyText(url)} className="text-indigo-500 hover:underline cursor-pointer">
+                                Copy link
+                              </button>
+                              <button
+                                title="Revoke invite"
+                                onClick={() =>
+                                  void api.deleteInvite(inv.id).then(() => setInvites((p) => p.filter((x) => x.id !== inv.id)))
+                                }
+                                className="text-zinc-400 hover:text-rose-500 cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </span>
                           )}
                         </div>
                       );
@@ -395,6 +410,55 @@ export function SettingsModal({
 
           {tab === 'data' && (
             <>
+              {currentProject && (
+                <div>
+                  <h3 className="font-semibold text-zinc-900 dark:text-zinc-100 mb-2">Project ({currentProject.key})</h3>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void userAction(() => api.updateProject(currentProject.key, projName, projDesc)).then(onRefresh);
+                    }}
+                    className="flex items-center gap-2"
+                  >
+                    <input
+                      type="text"
+                      value={projName}
+                      onChange={(e) => setProjName(e.target.value)}
+                      placeholder="Project name"
+                      className="w-40 px-3 py-1.5 rounded-lg text-xs border border-zinc-300 dark:border-zinc-700 bg-transparent"
+                    />
+                    <input
+                      type="text"
+                      value={projDesc}
+                      onChange={(e) => setProjDesc(e.target.value)}
+                      placeholder="Description"
+                      className="flex-1 px-3 py-1.5 rounded-lg text-xs border border-zinc-300 dark:border-zinc-700 bg-transparent"
+                    />
+                    <button
+                      type="submit"
+                      className="px-3 py-1.5 rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-medium cursor-pointer"
+                    >
+                      Save
+                    </button>
+                  </form>
+                  {currentUser.role === 'admin' && (
+                    <button
+                      onClick={() => {
+                        const typed = prompt(
+                          `Delete project ${currentProject.key} with all its issues and comments? This cannot be undone.\nType ${currentProject.key} to confirm:`
+                        );
+                        if (typed === currentProject.key) {
+                          void userAction(() => api.deleteProject(currentProject.key)).then(onClose);
+                        }
+                      }}
+                      className="mt-2 text-xs text-rose-500 hover:underline cursor-pointer"
+                    >
+                      Delete project…
+                    </button>
+                  )}
+                </div>
+              )}
+
               {currentProject && (
                 <div>
                   <h3 className="font-semibold text-zinc-900 dark:text-zinc-100 mb-2">

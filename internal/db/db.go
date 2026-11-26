@@ -19,6 +19,7 @@ var (
 	ErrConflict     = errors.New("conflict")
 	ErrUnauthorized = errors.New("unauthorized")
 	ErrValidation   = errors.New("validation error")
+	ErrForbidden    = errors.New("forbidden")
 )
 
 type Store struct {

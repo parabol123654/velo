@@ -85,8 +85,21 @@ describe('applyEvent', () => {
     expect(r.refreshMeta).toBe(false);
   });
 
+  it('decrements the comment count on comment.deleted, never below zero', () => {
+    const ev = { type: 'comment.deleted', payload: { id: 'c', issue_id: '1' } };
+    expect(applyEvent([issue('1', { comment_count: 1 })], ev, P).issues[0].comment_count).toBe(0);
+    expect(applyEvent([issue('1')], ev, P).issues[0].comment_count).toBe(0);
+  });
+
+  it('ignores comment.updated', () => {
+    const list = [issue('1')];
+    const r = applyEvent(list, { type: 'comment.updated', payload: { issue_id: '1' } }, P);
+    expect(r.issues).toBe(list);
+    expect(r.reload).toBe(false);
+  });
+
   it('falls back to a reload for structural events', () => {
-    for (const type of ['project.created', 'state.updated', 'cycle.updated', 'user.updated']) {
+    for (const type of ['project.created', 'project.deleted', 'state.updated', 'cycle.deleted', 'user.updated']) {
       expect(applyEvent([], { type, payload: {} }, P).reload).toBe(true);
     }
   });

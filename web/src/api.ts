@@ -207,6 +207,8 @@ export const api = {
       body: JSON.stringify({ role }),
     }),
 
+  deleteInvite: (id: string) => req<{ ok: boolean }>(`/api/invites/${id}`, { method: 'DELETE' }),
+
   listProjects: () => req<Project[]>('/api/projects'),
   createProject: (key: string, name: string, description: string) =>
     req<Project>('/api/projects', {
@@ -217,6 +219,15 @@ export const api = {
     req<{ project: Project; states: WorkflowState[]; labels: Label[]; cycles: Cycle[] }>(
       `/api/projects/${encodeURIComponent(ref)}`
     ),
+
+  updateProject: (ref: string, name: string, description: string) =>
+    req<Project>(`/api/projects/${encodeURIComponent(ref)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name, description }),
+    }),
+  deleteProject: (ref: string) =>
+    req<{ ok: boolean }>(`/api/projects/${encodeURIComponent(ref)}`, { method: 'DELETE' }),
+  deleteCycle: (id: string) => req<{ ok: boolean }>(`/api/cycles/${id}`, { method: 'DELETE' }),
 
   createLabel: (projectRef: string, name: string, color: string) =>
     req<Label>(`/api/projects/${encodeURIComponent(projectRef)}/labels`, {
@@ -278,6 +289,9 @@ export const api = {
     req<{ ok: boolean }>(`/api/issues/${encodeURIComponent(ref)}`, {
       method: 'DELETE',
     }),
+  updateComment: (id: string, body: string) =>
+    req<Comment>(`/api/comments/${id}`, { method: 'PATCH', body: JSON.stringify({ body }) }),
+  deleteComment: (id: string) => req<{ ok: boolean }>(`/api/comments/${id}`, { method: 'DELETE' }),
   addComment: (ref: string, body: string) =>
     req<Comment>(`/api/issues/${encodeURIComponent(ref)}/comments`, {
       method: 'POST',
