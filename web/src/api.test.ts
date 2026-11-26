@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assignableUsers, tokenScopeLabel, User } from './api';
+import { assignableUsers, describeActivity, tokenScopeLabel, User } from './api';
 
 const u = (id: string, disabled = false): User => ({
   id,
@@ -26,5 +26,17 @@ describe('tokenScopeLabel', () => {
   it('names the access and the projects, or all projects', () => {
     expect(tokenScopeLabel({ access: 'read', project_keys: ['DEV', 'OPS'] })).toBe('read · DEV, OPS');
     expect(tokenScopeLabel({ access: 'write', project_keys: [] })).toBe('write · all projects');
+  });
+});
+
+describe('describeActivity', () => {
+  it('reads naturally for each kind of change', () => {
+    expect(describeActivity({ action: 'created' })).toBe('created this issue');
+    expect(describeActivity({ action: 'updated', field: 'checklist', new_value: 'checked: deploy' })).toBe('checked: deploy');
+    expect(describeActivity({ action: 'updated', field: 'link', new_value: 'blocked_by DEV-1' })).toBe('linked: blocked by DEV-1');
+    expect(describeActivity({ action: 'updated', field: 'link', old_value: 'DEV-1' })).toBe('removed the link to DEV-1');
+    expect(describeActivity({ action: 'updated', field: 'priority', old_value: 'Low', new_value: 'High' })).toBe(
+      'changed priority from "Low" to "High"'
+    );
   });
 });

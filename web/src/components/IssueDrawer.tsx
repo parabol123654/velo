@@ -3,6 +3,7 @@ import { X, Trash2, Plus, GitBranch, MessageSquare, Activity as ActivityIcon, Ed
 import {
   api,
   assignableUsers,
+  describeActivity,
   Activity,
   Comment,
   Cycle,
@@ -497,9 +498,7 @@ export function IssueDrawer({
                     <span>
                       <strong className="text-zinc-700 dark:text-zinc-300">{ac.actor_name}</strong>
                       {ac.via && <ViaBadge via={ac.via} />}{' '}
-                      {ac.action === 'created'
-                        ? 'created this issue'
-                        : `changed ${ac.field} from "${ac.old_value || 'none'}" to "${ac.new_value || 'none'}"`}
+                      {describeActivity(ac)}
                     </span>
                     <span className="text-[11px] text-zinc-400 shrink-0">
                       {new Date(ac.created_at).toLocaleString()}

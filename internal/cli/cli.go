@@ -81,6 +81,7 @@ Usage:
   velo issue update <KEY-N> [--state ...]       Update state, priority, title, desc, assignee, cycle, parent, labels
   velo issue next [--project KEY] [--label L]   Show the next unstarted, unassigned, unblocked issue
   velo issue claim <KEY-N>                      Assign to yourself and move to In Progress
+  velo issue check <KEY-N> <ITEM> [--uncheck]   Tick a "- [ ]" item in the description (or --index N)
   velo issue delete <KEY-N>                     Delete an issue
   velo issue link <KEY-N> blocks <KEY-M>        Link issues (blocks, blocked_by, relates, duplicates, duplicated_by)
   velo issue unlink <KEY-N> <KEY-M>             Remove links between two issues
@@ -571,6 +572,26 @@ func runIssue(args []string) error {
 			return err
 		}
 		fmt.Printf("Claimed %s -> %s, assigned to %s\n", iss.Identifier, iss.StateName, iss.AssigneeName)
+		return nil
+
+	case "check":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: velo issue check <KEY-N> [ITEM TEXT] [--index N] [--uncheck]")
+		}
+		fs := flag.NewFlagSet("issue check", flag.ContinueOnError)
+		index := fs.Int("index", 0, "1-based item position instead of text")
+		uncheck := fs.Bool("uncheck", false, "Untick instead of tick")
+		u := fs.String("url", "", "Velo server URL")
+		tok := fs.String("token", "", "API token")
+		item, err := parseWithName(fs, args[2:])
+		if err != nil {
+			return err
+		}
+		iss, err := newAPIClient(*u, *tok).CheckItem(args[1], item, *index, !*uncheck)
+		if err != nil {
+			return err
+		}
+		fmt.Println(iss.Description)
 		return nil
 
 	case "link":

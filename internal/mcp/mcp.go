@@ -354,6 +354,21 @@ func dispatchTool(api *client.Client, name string, args map[string]any) (string,
 		}
 		return toPrettyJSON(iss), nil
 
+	case "check_item":
+		index := 0
+		if i := intPtrArg(args, "index"); i != nil {
+			index = *i
+		}
+		checked := true
+		if v, ok := args["checked"].(bool); ok {
+			checked = v
+		}
+		iss, err := api.CheckItem(strArg(args, "ref"), strArg(args, "item"), index, checked)
+		if err != nil {
+			return "", err
+		}
+		return iss.Description, nil
+
 	case "link_issues":
 		iss, err := api.LinkIssues(strArg(args, "ref"), strArg(args, "kind"), strArg(args, "target"))
 		if err != nil {
@@ -553,6 +568,20 @@ func toolDefinitions() []map[string]any {
 				"type":       "object",
 				"properties": map[string]any{"ref": map[string]any{"type": "string", "description": "Issue identifier (e.g. DEV-12)"}},
 				"required":   []string{"ref"},
+			},
+		},
+		{
+			"name":        "check_item",
+			"description": "Tick (or untick) one '- [ ]' item in an issue's description, e.g. an acceptance criterion you finished. Choose it by text (exact match, or a unique part) or by 1-based index. Returns the updated description.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"ref":     map[string]any{"type": "string", "description": "Issue identifier (e.g. DEV-12)"},
+					"item":    map[string]any{"type": "string", "description": "Item text or a unique part of it"},
+					"index":   map[string]any{"type": "integer", "description": "1-based position among the checklist items (instead of item)"},
+					"checked": map[string]any{"type": "boolean", "description": "false to untick; default true"},
+				},
+				"required": []string{"ref"},
 			},
 		},
 		{

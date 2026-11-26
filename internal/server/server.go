@@ -226,6 +226,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/issues", s.requireAuth(filtered, s.handleListIssues))
 	s.mux.HandleFunc("GET /api/issues/next", s.requireAuth(filtered, s.handleNextIssue))
 	s.mux.HandleFunc("POST /api/issues/{ref}/claim", s.requireAuth(s.inProject("issue"), s.handleClaimIssue))
+	s.mux.HandleFunc("POST /api/issues/{ref}/checklist", s.requireAuth(s.inProject("issue"), s.handleCheckItem))
 	s.mux.HandleFunc("POST /api/issues", s.requireAuth(filtered, s.handleCreateIssue))
 	s.mux.HandleFunc("GET /api/issues/{ref}", s.requireAuth(s.inProject("issue"), s.handleGetIssue))
 	s.mux.HandleFunc("PATCH /api/issues/{ref}", s.requireAuth(s.inProject("issue"), s.handleUpdateIssue))
@@ -1241,6 +1242,27 @@ func (s *Server) handleNextIssue(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleClaimIssue(w http.ResponseWriter, r *http.Request) {
 	iss, err := s.storeFor(r).ClaimIssue(currentUser(r).ID, r.PathValue("ref"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.Broadcast("issue.updated", iss.ProjectID, iss)
+	writeJSON(w, http.StatusOK, iss)
+}
+
+// handleCheckItem checks (default) or unchecks one "- [ ]" item in the description.
+func (s *Server) handleCheckItem(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Item    string `json:"item"`
+		Index   int    `json:"index"`
+		Checked *bool  `json:"checked"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, err)
+		return
+	}
+	checked := body.Checked == nil || *body.Checked
+	iss, err := s.storeFor(r).CheckItem(currentUser(r).ID, r.PathValue("ref"), body.Item, body.Index, checked)
 	if err != nil {
 		writeErr(w, err)
 		return

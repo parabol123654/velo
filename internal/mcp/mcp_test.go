@@ -218,3 +218,20 @@ func TestMCPNextAndClaim(t *testing.T) {
 		t.Fatalf("empty queue: %s", text)
 	}
 }
+
+func TestMCPCheckItem(t *testing.T) {
+	api, st := newMCPTestAPI(t)
+	users, _ := st.ListUsers()
+	st.CreateIssue(users[0].ID, db.CreateIssueInput{ProjectRef: "VELO", Title: "x", Description: "- [ ] schema\n- [ ] api"})
+	text, err := dispatchTool(api, "check_item", map[string]any{"ref": "VELO-1", "item": "api"})
+	if err != nil || text != "- [ ] schema\n- [x] api" {
+		t.Fatalf("check_item: %v %q", err, text)
+	}
+	text, err = dispatchTool(api, "check_item", map[string]any{"ref": "VELO-1", "index": float64(2), "checked": false})
+	if err != nil || text != "- [ ] schema\n- [ ] api" {
+		t.Fatalf("uncheck by index: %v %q", err, text)
+	}
+	if _, err := dispatchTool(api, "check_item", map[string]any{"ref": "VELO-1", "item": "deploy"}); err == nil {
+		t.Fatal("unknown item should fail")
+	}
+}

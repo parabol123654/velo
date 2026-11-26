@@ -323,3 +323,12 @@ func (c *Client) ClaimIssue(ref string) (*db.Issue, error) {
 	err := c.do("POST", "/api/issues/"+url.PathEscape(ref)+"/claim", nil, &out)
 	return &out, err
 }
+
+// CheckItem checks or unchecks a checklist item, chosen by text or 1-based index.
+func (c *Client) CheckItem(ref, item string, index int, checked bool) (*db.Issue, error) {
+	var out db.Issue
+	err := c.do("POST", "/api/issues/"+url.PathEscape(ref)+"/checklist", map[string]any{
+		"item": item, "index": index, "checked": checked,
+	}, &out)
+	return &out, err
+}

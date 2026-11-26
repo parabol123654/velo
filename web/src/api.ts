@@ -341,6 +341,16 @@ export function assignableUsers(users: User[], selectedId?: string): User[] {
   return users.filter((u) => !u.disabled_at || u.id === selectedId);
 }
 
+// describeActivity turns an activity into the text after the actor's name.
+export function describeActivity(ac: Pick<Activity, 'action' | 'field' | 'old_value' | 'new_value'>): string {
+  if (ac.action === 'created') return 'created this issue';
+  if (ac.field === 'checklist') return ac.new_value ?? '';
+  if (ac.field === 'link') {
+    return ac.new_value ? `linked: ${ac.new_value.replace('_', ' ')}` : `removed the link to ${ac.old_value}`;
+  }
+  return `changed ${ac.field} from "${ac.old_value || 'none'}" to "${ac.new_value || 'none'}"`;
+}
+
 // tokenScopeLabel describes what an API token may do, e.g. "read · DEV, OPS".
 export function tokenScopeLabel(t: Pick<APIToken, 'access' | 'project_keys'>): string {
   const projects = t.project_keys.length ? t.project_keys.join(', ') : 'all projects';
