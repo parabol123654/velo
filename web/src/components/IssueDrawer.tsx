@@ -21,7 +21,6 @@ export function IssueDrawer({
   users,
   onClose,
   onSelectIssueRef,
-  onUpdated,
 }: {
   issueRef: string | null;
   states: WorkflowState[];
@@ -30,7 +29,6 @@ export function IssueDrawer({
   users: User[];
   onClose: () => void;
   onSelectIssueRef: (ref: string) => void;
-  onUpdated: () => void;
 }) {
   const [issue, setIssue] = useState<Issue | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -68,7 +66,6 @@ export function IssueDrawer({
     setIssue(updated);
     const d = await api.getIssueDetail(updated.identifier);
     setActivities(d.activities);
-    onUpdated();
   };
 
   const toggleLabel = async (labelId: string) => {
@@ -89,7 +86,6 @@ export function IssueDrawer({
     });
     setSubTitle('');
     await loadDetail(issue.identifier);
-    onUpdated();
   };
 
   const handleAddComment = async () => {
@@ -97,14 +93,12 @@ export function IssueDrawer({
     await api.addComment(issue.identifier, commentBody);
     setCommentBody('');
     await loadDetail(issue.identifier);
-    onUpdated();
   };
 
   const handleDelete = async () => {
     if (!confirm(`Delete ${issue.identifier}?`)) return;
     await api.deleteIssue(issue.identifier);
     onClose();
-    onUpdated();
   };
 
   return (

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Zap,
   Plus,
@@ -31,6 +31,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { IssueDrawer } from './components/IssueDrawer';
 import { MarkdownEditor } from './components/Markdown';
 import { SettingsModal } from './components/SettingsModal';
+import { applyEvent, LiveEvent } from './live';
 
 type ViewMode = 'board' | 'list' | 'backlog' | 'cycles';
 
@@ -131,20 +132,83 @@ export function App() {
     }
   }, [user, loadWorkspace]);
 
-  // Real-time SSE live sync
+  // Refs let the long-lived SSE handler see current state without reconnecting.
+  const issuesRef = useRef(issues);
+  issuesRef.current = issues;
+  const activeKeyRef = useRef(activeKey);
+  activeKeyRef.current = activeKey;
+  const projectIdRef = useRef('');
+  projectIdRef.current = projects.find((p) => p.key === activeKey)?.id ?? '';
+  const loadWorkspaceRef = useRef(loadWorkspace);
+  loadWorkspaceRef.current = loadWorkspace;
+
+  // Small refetch for counters (sidebar open counts, cycle progress); never the issue list.
+  const refreshMeta = useCallback(async () => {
+    const key = activeKeyRef.current;
+    const [projs, bundle] = await Promise.all([
+      api.listProjects(),
+      key ? api.getProjectBundle(key) : Promise.resolve(null),
+    ]);
+    setProjects(projs);
+    if (bundle && key === activeKeyRef.current) {
+      setStates(bundle.states);
+      setLabels(bundle.labels);
+      setCycles(bundle.cycles);
+    }
+  }, []);
+
+  // Real-time SSE live sync: patch only the affected cards.
   useEffect(() => {
     if (!user) return;
     const es = new EventSource('/api/events');
-    es.addEventListener('connected', () => setSseConnected(true));
-    es.onmessage = () => {
-      void loadWorkspace();
+    let lostConnection = false;
+    let metaTimer: ReturnType<typeof setTimeout> | undefined;
+    let reloadTimer: ReturnType<typeof setTimeout> | undefined;
+    const debounce = (timer: typeof metaTimer, fn: () => void) => {
+      clearTimeout(timer);
+      return setTimeout(fn, 300);
     };
-    es.onerror = () => setSseConnected(false);
+
+    es.addEventListener('connected', () => {
+      setSseConnected(true);
+      // Events may have been missed while disconnected: resync once.
+      if (lostConnection) void loadWorkspaceRef.current();
+      lostConnection = false;
+    });
+    es.onmessage = (msg) => {
+      let ev: LiveEvent;
+      try {
+        ev = JSON.parse(msg.data);
+      } catch {
+        return;
+      }
+      const res = applyEvent(issuesRef.current, ev, projectIdRef.current);
+      if (res.reload) {
+        reloadTimer = debounce(reloadTimer, () => void loadWorkspaceRef.current());
+        return;
+      }
+      if (res.issues !== issuesRef.current) {
+        issuesRef.current = res.issues;
+        setIssues(res.issues);
+      }
+      for (const ref of res.refetch) {
+        void api.getIssue(ref).then((fresh) =>
+          setIssues((prev) => prev.map((it) => (it.id === fresh.id ? fresh : it)))
+        );
+      }
+      if (res.refreshMeta) metaTimer = debounce(metaTimer, () => void refreshMeta());
+    };
+    es.onerror = () => {
+      lostConnection = true;
+      setSseConnected(false);
+    };
     return () => {
+      clearTimeout(metaTimer);
+      clearTimeout(reloadTimer);
       es.close();
       setSseConnected(false);
     };
-  }, [user, loadWorkspace]);
+  }, [user, refreshMeta]);
 
   const filteredIssues = useMemo(() => {
     return issues.filter((it) => {
@@ -244,7 +308,7 @@ export function App() {
   const handleCreateIssue = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeKey || !issTitle.trim()) return;
-    await api.createIssue({
+    const created = await api.createIssue({
       project_ref: activeKey,
       title: issTitle.trim(),
       description: issDesc,
@@ -257,7 +321,8 @@ export function App() {
     setIssDesc('');
     setIssPrio(0);
     setNewIssueOpen(false);
-    await loadWorkspace(activeKey);
+    // Show it now; the matching SSE event (issue.created) is an idempotent upsert.
+    setIssues(applyEvent(issuesRef.current, { type: 'issue.created', payload: created }, projectIdRef.current).issues);
   };
 
   const handleDropOnColumn = async (issueIdent: string, targetStateId: string, targetIndex?: number) => {
@@ -294,8 +359,9 @@ export function App() {
         )
       );
     }
-    await api.updateIssue(issueIdent, { state_id: targetStateId, position: newPos });
-    void loadWorkspace(activeKey);
+    // Reconcile with the server's version; SSE (issue.updated) delivers the same card to other clients.
+    const saved = await api.updateIssue(issueIdent, { state_id: targetStateId, position: newPos });
+    setIssues((prev) => prev.map((it) => (it.id === saved.id ? saved : it)));
   };
 
   const handleCreateCycle = async (e: React.FormEvent) => {
@@ -917,7 +983,6 @@ export function App() {
         users={users}
         onClose={() => setSelectedIssueRef(null)}
         onSelectIssueRef={setSelectedIssueRef}
-        onUpdated={() => void loadWorkspace(activeKey)}
       />
 
       <CommandPalette
