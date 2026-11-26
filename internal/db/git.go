@@ -8,13 +8,14 @@ import (
 
 const gitBotEmail = "github-bot@velo.local"
 
-// UserIDForGitEmail returns the Velo user whose email matches a Git author,
-// or a "GitHub" bot user (created on first use, cannot log in).
+// UserIDForGitEmail returns the enabled Velo user whose email matches a Git
+// author, or a "GitHub" bot user (created on first use, cannot log in).
+// Disabled users are treated as unknown so nothing is posted in their name.
 func (s *Store) UserIDForGitEmail(email string) (string, error) {
 	var id string
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email != "" {
-		err := s.db.QueryRow(`SELECT id FROM users WHERE email = ?`, email).Scan(&id)
+		err := s.db.QueryRow(`SELECT id FROM users WHERE email = ? AND disabled_at IS NULL`, email).Scan(&id)
 		if err == nil {
 			return id, nil
 		}

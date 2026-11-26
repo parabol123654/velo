@@ -141,6 +141,26 @@ func TestGitHubWebhook(t *testing.T) {
 		t.Fatalf("DEV-4 comments = %+v", c4)
 	}
 
+	// A commit by a disabled user is posted as "GitHub", not in their name.
+	gone, err := srv.store.CreateUserDirect("gone@velo.dev", "Gone", "password123", "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	yes := true
+	if _, err := srv.store.UpdateUser(admin.ID, gone.ID, db.UpdateUserInput{Disabled: &yes}); err != nil {
+		t.Fatal(err)
+	}
+	pushGone := `{"ref":"refs/heads/feature","repository":{"default_branch":"main"},"commits":[
+		{"id":"fff0000aaa","message":"refs DEV-3","url":"https://github.com/o/r/commit/fff0000aaa",
+		 "author":{"name":"Gone","email":"gone@velo.dev"}}]}`
+	if code := send("push", pushGone, ""); code != http.StatusOK {
+		t.Fatalf("push by disabled user: %d", code)
+	}
+	c3 := comments("DEV-3")
+	if last := c3[len(c3)-1]; last.AuthorName != "GitHub" {
+		t.Fatalf("comment by disabled user posted as %q, want GitHub", last.AuthorName)
+	}
+
 	// Disabled when no secret is configured.
 	srv.GitHubWebhookSecret = ""
 	if code := send("push", push, ""); code != http.StatusNotFound {
