@@ -1,6 +1,6 @@
 # Velo — Engineering & AI Agent Guidelines
 
-All human and AI contributors working on `velo` MUST follow the **Karpathy Guidelines** (also located in `.agents/skills/karpathy-guidelines/SKILL.md`):
+All human and AI contributors working on `velo` MUST follow the **Karpathy Guidelines** (also located in `.claude/skills/karpathy-guidelines/SKILL.md`):
 
 1. **Think Before Coding:** Surface assumptions and tradeoffs explicitly. Never hide ambiguity.
 2. **Simplicity First:** Minimum code that solves the problem. Zero speculative abstractions, zero unused configurability, zero heavy ORMs or bloated dependencies. If 200 lines can be 50, rewrite it.

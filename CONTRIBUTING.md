@@ -49,6 +49,8 @@ Every change comes with a test that would fail without it. Bug fixes start with 
 - If the change alters behavior described in SPEC.md, update SPEC.md in the same PR. Link the issue it closes (`Fixes #12`).
 - Commit messages follow `type: summary` with `feat`, `fix`, `docs`, `test`, `chore` or `style`, for example `fix: keep the current session after a password change`.
 - Describe what changed, why, and how you checked it.
+- Fill in the [pull request template](./.github/pull_request_template.md). Every PR records the verdict of the code review (APPROVED, with any Medium finding left open and why) and of QA (QA PASS). Contributors using Claude Code get both from the `code-reviewer` and `qa-tester` subagents in `.claude/agents/`; see [CLAUDE.md](./CLAUDE.md).
+- `main` is protected: changes land only through pull requests with green CI, never by pushing to it.
 
 ## License
 
