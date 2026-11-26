@@ -166,6 +166,7 @@ type IssueQuery struct {
 	Assignee, Cycle, Label, Parent  string
 	Priority                        *int
 	Limit                           int
+	Unblocked                       bool // only issues with no unfinished blockers
 }
 
 func (c *Client) ListIssues(f IssueQuery) ([]db.Issue, error) {
@@ -183,6 +184,9 @@ func (c *Client) ListIssues(f IssueQuery) ([]db.Issue, error) {
 	}
 	if f.Limit > 0 {
 		q.Set("limit", strconv.Itoa(f.Limit))
+	}
+	if f.Unblocked {
+		q.Set("unblocked", "true")
 	}
 	path := "/api/issues"
 	if enc := q.Encode(); enc != "" {
@@ -282,4 +286,19 @@ func (c *Client) ImportProject(bundle []byte) (*db.Project, error) {
 	}
 	var out db.Project
 	return &out, json.Unmarshal(raw, &out)
+}
+
+// LinkIssues records "ref kind target", kind being blocks, blocked_by,
+// relates, duplicates or duplicated_by.
+func (c *Client) LinkIssues(ref, kind, target string) (*db.Issue, error) {
+	var out db.Issue
+	err := c.do("POST", "/api/issues/"+url.PathEscape(ref)+"/links", map[string]string{"kind": kind, "target": target}, &out)
+	return &out, err
+}
+
+// UnlinkIssues removes every link between two issues.
+func (c *Client) UnlinkIssues(ref, target string) (*db.Issue, error) {
+	var out db.Issue
+	err := c.do("DELETE", "/api/issues/"+url.PathEscape(ref)+"/links/"+url.PathEscape(target), nil, &out)
+	return &out, err
 }

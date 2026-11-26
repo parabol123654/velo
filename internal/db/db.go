@@ -239,6 +239,16 @@ CREATE TABLE IF NOT EXISTS issue_labels (
 	PRIMARY KEY (issue_id, label_id)
 );
 
+CREATE TABLE IF NOT EXISTS issue_links (
+	id         TEXT PRIMARY KEY,
+	source_id  TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+	target_id  TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+	kind       TEXT NOT NULL CHECK (kind IN ('blocks', 'relates', 'duplicates')),
+	created_at DATETIME NOT NULL,
+	UNIQUE (source_id, target_id, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_issue_links_target ON issue_links(target_id);
+
 CREATE TABLE IF NOT EXISTS comments (
 	id         TEXT PRIMARY KEY,
 	issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,

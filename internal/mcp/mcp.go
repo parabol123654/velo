@@ -188,16 +188,17 @@ func dispatchTool(api *client.Client, name string, args map[string]any) (string,
 			limit = *l
 		}
 		issues, err := api.ListIssues(client.IssueQuery{
-			Project:  strArg(args, "project"),
-			State:    strArg(args, "state"),
-			Category: strArg(args, "category"),
-			Query:    strArg(args, "query"),
-			Assignee: strArg(args, "assignee"),
-			Cycle:    strArg(args, "cycle"),
-			Label:    strArg(args, "label"),
-			Parent:   strArg(args, "parent"),
-			Priority: intPtrArg(args, "priority"),
-			Limit:    limit,
+			Project:   strArg(args, "project"),
+			State:     strArg(args, "state"),
+			Category:  strArg(args, "category"),
+			Query:     strArg(args, "query"),
+			Assignee:  strArg(args, "assignee"),
+			Cycle:     strArg(args, "cycle"),
+			Label:     strArg(args, "label"),
+			Parent:    strArg(args, "parent"),
+			Priority:  intPtrArg(args, "priority"),
+			Limit:     limit,
+			Unblocked: args["unblocked"] == true,
 		})
 		if err != nil {
 			return "", err
@@ -336,6 +337,20 @@ func dispatchTool(api *client.Client, name string, args map[string]any) (string,
 		}
 		return toPrettyJSON(cy), nil
 
+	case "link_issues":
+		iss, err := api.LinkIssues(strArg(args, "ref"), strArg(args, "kind"), strArg(args, "target"))
+		if err != nil {
+			return "", err
+		}
+		return toPrettyJSON(iss.Links), nil
+
+	case "unlink_issues":
+		iss, err := api.UnlinkIssues(strArg(args, "ref"), strArg(args, "target"))
+		if err != nil {
+			return "", err
+		}
+		return toPrettyJSON(iss.Links), nil
+
 	case "export_project":
 		format := strArg(args, "format")
 		if format == "" {
@@ -365,16 +380,17 @@ func toolDefinitions() []map[string]any {
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"project":  map[string]any{"type": "string", "description": "Project key such as DEV"},
-					"state":    map[string]any{"type": "string", "description": "Workflow state name such as Todo or In Progress"},
-					"category": map[string]any{"type": "string", "description": "backlog, unstarted, started, completed, or canceled"},
-					"priority": map[string]any{"type": "integer", "description": "0=None, 1=Low, 2=Medium, 3=High, 4=Urgent"},
-					"query":    map[string]any{"type": "string", "description": "Optional FTS5 search text"},
-					"assignee": map[string]any{"type": "string", "description": "User email, \"me\", or \"none\" for unassigned"},
-					"cycle":    map[string]any{"type": "string", "description": "Cycle name, or \"none\" for issues without a cycle"},
-					"label":    map[string]any{"type": "string", "description": "Label name"},
-					"parent":   map[string]any{"type": "string", "description": "Parent identifier (e.g. DEV-1) to list its sub-issues, or \"root\" for top-level only"},
-					"limit":    map[string]any{"type": "integer", "description": "Max issues to return (default 30)"},
+					"project":   map[string]any{"type": "string", "description": "Project key such as DEV"},
+					"state":     map[string]any{"type": "string", "description": "Workflow state name such as Todo or In Progress"},
+					"category":  map[string]any{"type": "string", "description": "backlog, unstarted, started, completed, or canceled"},
+					"priority":  map[string]any{"type": "integer", "description": "0=None, 1=Low, 2=Medium, 3=High, 4=Urgent"},
+					"query":     map[string]any{"type": "string", "description": "Optional FTS5 search text"},
+					"assignee":  map[string]any{"type": "string", "description": "User email, \"me\", or \"none\" for unassigned"},
+					"cycle":     map[string]any{"type": "string", "description": "Cycle name, or \"none\" for issues without a cycle"},
+					"label":     map[string]any{"type": "string", "description": "Label name"},
+					"parent":    map[string]any{"type": "string", "description": "Parent identifier (e.g. DEV-1) to list its sub-issues, or \"root\" for top-level only"},
+					"unblocked": map[string]any{"type": "boolean", "description": "Only issues not blocked by an unfinished issue"},
+					"limit":     map[string]any{"type": "integer", "description": "Max issues to return (default 30)"},
 				},
 			},
 		},
@@ -500,6 +516,31 @@ func toolDefinitions() []map[string]any {
 					"status":     map[string]any{"type": "string", "description": "active (default), upcoming, or completed"},
 				},
 				"required": []string{"project", "name"},
+			},
+		},
+		{
+			"name":        "link_issues",
+			"description": "Link two issues in the same project, e.g. DEV-1 blocks DEV-2. Blocked issues show blocked_by_count > 0 until their blockers are done.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"ref":    map[string]any{"type": "string", "description": "Issue identifier (e.g. DEV-1)"},
+					"kind":   map[string]any{"type": "string", "description": "blocks, blocked_by, relates, duplicates or duplicated_by"},
+					"target": map[string]any{"type": "string", "description": "Other issue identifier (e.g. DEV-2)"},
+				},
+				"required": []string{"ref", "kind", "target"},
+			},
+		},
+		{
+			"name":        "unlink_issues",
+			"description": "Remove every link between two issues.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"ref":    map[string]any{"type": "string", "description": "Issue identifier (e.g. DEV-1)"},
+					"target": map[string]any{"type": "string", "description": "Other issue identifier (e.g. DEV-2)"},
+				},
+				"required": []string{"ref", "target"},
 			},
 		},
 		{

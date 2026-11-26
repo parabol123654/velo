@@ -87,8 +87,17 @@ export interface Issue {
   sub_issue_done_count: number;
   sub_issues?: IssueSummary[];
   comment_count: number;
+  blocked_by_count: number; // unfinished issues blocking this one
+  links?: IssueLink[]; // only on single-issue reads
   created_at: string;
   updated_at: string;
+}
+
+export type LinkKind = 'blocks' | 'blocked_by' | 'relates' | 'duplicates' | 'duplicated_by';
+
+export interface IssueLink {
+  kind: LinkKind;
+  issue: IssueSummary;
 }
 
 export interface Comment {
@@ -289,6 +298,13 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
+  linkIssues: (ref: string, kind: LinkKind, target: string) =>
+    req<Issue>(`/api/issues/${encodeURIComponent(ref)}/links`, {
+      method: 'POST',
+      body: JSON.stringify({ kind, target }),
+    }),
+  unlinkIssues: (ref: string, target: string) =>
+    req<Issue>(`/api/issues/${encodeURIComponent(ref)}/links/${encodeURIComponent(target)}`, { method: 'DELETE' }),
   deleteIssue: (ref: string) =>
     req<{ ok: boolean }>(`/api/issues/${encodeURIComponent(ref)}`, {
       method: 'DELETE',

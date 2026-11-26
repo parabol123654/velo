@@ -226,5 +226,6 @@ func (s *Server) applyGitRef(actorID, ref string, closeIt bool, dedupeKey, body 
 		return err
 	}
 	s.hub.Broadcast("issue.updated", updated.ProjectID, updated)
+	s.publishBlocked(updated.ID)
 	return nil
 }

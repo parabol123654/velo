@@ -25,6 +25,7 @@ function issue(id: string, extra: Partial<Issue> = {}): Issue {
     sub_issue_count: 0,
     sub_issue_done_count: 0,
     comment_count: 0,
+    blocked_by_count: 0,
     created_at: '',
     updated_at: '',
     ...extra,

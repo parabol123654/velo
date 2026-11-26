@@ -8,6 +8,7 @@ import {
   Cycle,
   Issue,
   Label,
+  LinkKind,
   PRIORITIES,
   User,
   WorkflowState,
@@ -46,6 +47,9 @@ export function IssueDrawer({
   const [subTitle, setSubTitle] = useState('');
   const [commentBody, setCommentBody] = useState('');
   const [editingComment, setEditingComment] = useState<string | null>(null);
+  const [linkKind, setLinkKind] = useState<LinkKind>('blocks');
+  const [linkTarget, setLinkTarget] = useState('');
+  const [linkError, setLinkError] = useState('');
   const [commentDraft, setCommentDraft] = useState('');
 
   const loadDetail = async (ref: string) => {
@@ -117,6 +121,22 @@ export function IssueDrawer({
     await api.addComment(issue.identifier, commentBody);
     setCommentBody('');
     await loadDetail(issue.identifier);
+  };
+
+  const handleLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!linkTarget.trim()) return;
+    try {
+      setIssue(await api.linkIssues(issue.identifier, linkKind, linkTarget.trim().toUpperCase()));
+      setLinkTarget('');
+      setLinkError('');
+    } catch (err) {
+      setLinkError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleUnlink = async (target: string) => {
+    setIssue(await api.unlinkIssues(issue.identifier, target));
   };
 
   const saveComment = async (id: string) => {
@@ -405,6 +425,66 @@ export function IssueDrawer({
             </form>
           </div>
 
+          {/* Links */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                Links{issue.blocked_by_count > 0 && <span className="ml-2 normal-case text-rose-500">blocked</span>}
+              </span>
+            </div>
+            {issue.links && issue.links.length > 0 && (
+              <div className="mb-2 divide-y divide-zinc-200 dark:divide-zinc-800 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                {issue.links.map((l) => (
+                  <div key={l.kind + l.issue.id} className="flex items-center justify-between px-3 py-2 text-xs">
+                    <button
+                      onClick={() => onSelectIssueRef(l.issue.identifier)}
+                      className="flex items-center gap-2 min-w-0 text-left hover:underline cursor-pointer"
+                    >
+                      <span className="text-zinc-400 shrink-0">{LINK_LABELS[l.kind]}</span>
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: l.issue.state_color }} />
+                      <span className="font-mono text-zinc-400">{l.issue.identifier}</span>
+                      <span className="text-zinc-800 dark:text-zinc-200 truncate">{l.issue.title}</span>
+                    </button>
+                    <button
+                      title="Remove link"
+                      onClick={() => void handleUnlink(l.issue.identifier)}
+                      className="text-zinc-400 hover:text-rose-500 shrink-0 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <form onSubmit={handleLink} className="flex items-center gap-2">
+              <select
+                value={linkKind}
+                onChange={(e) => setLinkKind(e.target.value as LinkKind)}
+                className="px-2 py-1.5 rounded-lg text-xs border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900"
+              >
+                {(Object.keys(LINK_LABELS) as LinkKind[]).map((k) => (
+                  <option key={k} value={k}>
+                    {LINK_LABELS[k]}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={linkTarget}
+                onChange={(e) => setLinkTarget(e.target.value)}
+                placeholder={`${issue.project_key}-…`}
+                className="w-28 px-3 py-1.5 rounded-lg text-xs border border-zinc-200 dark:border-zinc-800 bg-transparent font-mono"
+              />
+              <button
+                type="submit"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" /> Link
+              </button>
+            </form>
+            {linkError && <p className="mt-1 text-xs text-rose-500">{linkError}</p>}
+          </div>
+
           {/* Activity Log */}
           {activities.length > 0 && (
             <div>
@@ -538,3 +618,11 @@ function ViaBadge({ via }: { via: string }) {
     </span>
   );
 }
+
+const LINK_LABELS: Record<LinkKind, string> = {
+  blocks: 'blocks',
+  blocked_by: 'blocked by',
+  relates: 'relates to',
+  duplicates: 'duplicates',
+  duplicated_by: 'duplicated by',
+};

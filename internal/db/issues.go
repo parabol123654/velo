@@ -156,6 +156,12 @@ func (s *Store) CreateIssue(actorID string, in CreateIssueInput) (*Issue, error)
 	return s.GetIssue(issueID)
 }
 
+// openBlockersSQL counts unfinished issues that block issue i.
+const openBlockersSQL = `(SELECT COUNT(*) FROM issue_links bl
+	JOIN issues bi ON bi.id = bl.source_id
+	JOIN workflow_states bws ON bws.id = bi.state_id
+	WHERE bl.target_id = i.id AND bl.kind = 'blocks' AND bws.category NOT IN ('completed', 'canceled'))`
+
 const baseIssueSelect = `
 SELECT
 	i.id, i.project_id, p.key, i.number, i.identifier,
@@ -170,6 +176,7 @@ SELECT
 	(SELECT COUNT(*) FROM issues sub WHERE sub.parent_id = i.id) AS sub_count,
 	(SELECT COUNT(*) FROM issues sub JOIN workflow_states sws ON sws.id = sub.state_id WHERE sub.parent_id = i.id AND sws.category = 'completed') AS sub_done_count,
 	(SELECT COUNT(*) FROM comments cm WHERE cm.issue_id = i.id) AS comment_count,
+	` + openBlockersSQL + ` AS blocked_by_count,
 	i.created_at, i.updated_at
 FROM issues i
 JOIN projects p ON p.id = i.project_id
@@ -192,7 +199,7 @@ func scanIssue(scanner interface{ Scan(dest ...any) error }) (Issue, error) {
 		&it.CreatorID, &it.CreatorName,
 		&it.CycleID, &it.CycleName,
 		&it.Position,
-		&it.SubIssueCount, &it.SubIssueDoneCount, &it.CommentCount,
+		&it.SubIssueCount, &it.SubIssueDoneCount, &it.CommentCount, &it.BlockedByCount,
 		&it.CreatedAt, &it.UpdatedAt,
 	)
 	it.Labels = []Label{}
@@ -283,7 +290,13 @@ func (s *Store) GetIssue(ref string) (*Issue, error) {
 		}
 		it.SubIssues = append(it.SubIssues, sm)
 	}
-	return &it, subRows.Err()
+	if err := subRows.Err(); err != nil {
+		return nil, err
+	}
+	if it.Links, err = s.issueLinks(it.ID); err != nil {
+		return nil, err
+	}
+	return &it, nil
 }
 
 func (s *Store) ListIssues(f IssueFilter) ([]Issue, error) {
@@ -337,6 +350,9 @@ func (s *Store) ListIssues(f IssueFilter) ([]Issue, error) {
 	} else if f.ParentID != "" {
 		clauses = append(clauses, "i.parent_id IN (SELECT id FROM issues WHERE id = ? OR identifier = ? COLLATE NOCASE)")
 		args = append(args, f.ParentID, f.ParentID)
+	}
+	if f.Unblocked {
+		clauses = append(clauses, openBlockersSQL+" = 0")
 	}
 	if f.LabelID != "" {
 		clauses = append(clauses, "EXISTS (SELECT 1 FROM issue_labels il JOIN labels lb ON lb.id = il.label_id WHERE il.issue_id = i.id AND (lb.id = ? OR lb.name = ? COLLATE NOCASE))")

@@ -136,6 +136,8 @@ type Issue struct {
 	SubIssueDoneCount int            `json:"sub_issue_done_count"`
 	SubIssues         []IssueSummary `json:"sub_issues,omitempty"`
 	CommentCount      int            `json:"comment_count"`
+	BlockedByCount    int            `json:"blocked_by_count"` // unfinished issues blocking this one
+	Links             []IssueLink    `json:"links,omitempty"`  // only on single-issue reads
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
 }
@@ -209,6 +211,7 @@ type IssueFilter struct {
 	AssigneeID    string // ID or email, or "none"; the HTTP layer maps "me" to the caller
 	Priority      *int
 	ParentID      string // "root" for top-level only, ID or identifier, or "" for all
+	Unblocked     bool   // only issues with no unfinished blockers
 	LabelID       string
 	Query         string
 	Limit         int
@@ -241,4 +244,11 @@ type ExportBundle struct {
 	Labels     []Label         `json:"labels"`
 	Cycles     []Cycle         `json:"cycles"`
 	Issues     []ExportIssue   `json:"issues"`
+}
+
+// IssueLink is a relation seen from one issue. Kind is blocks, blocked_by,
+// relates, duplicates or duplicated_by.
+type IssueLink struct {
+	Kind  string       `json:"kind"`
+	Issue IssueSummary `json:"issue"`
 }

@@ -231,6 +231,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/issues/{ref}/comments", s.requireAuth(s.inProject("issue"), s.handleListComments))
 	s.mux.HandleFunc("POST /api/issues/{ref}/comments", s.requireAuth(s.inProject("issue"), s.handleAddComment))
 	s.mux.HandleFunc("GET /api/issues/{ref}/activities", s.requireAuth(s.inProject("issue"), s.handleListActivities))
+	s.mux.HandleFunc("POST /api/issues/{ref}/links", s.requireAuth(s.inProject("issue"), s.handleLinkIssues))
+	s.mux.HandleFunc("DELETE /api/issues/{ref}/links/{target}", s.requireAuth(s.inProject("issue"), s.handleUnlinkIssues))
 	s.mux.HandleFunc("PATCH /api/comments/{id}", s.requireAuth(s.inProject("comment"), s.handleUpdateComment))
 	s.mux.HandleFunc("DELETE /api/comments/{id}", s.requireAuth(s.inProject("comment"), s.handleDeleteComment))
 	s.mux.HandleFunc("POST /api/attachments", s.requireAuth(filtered, s.handleUploadAttachment))
@@ -806,6 +808,7 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 		Priority:      prio,
 		ParentID:      qv.Get("parent"),
 		LabelID:       qv.Get("label"),
+		Unblocked:     qv.Get("unblocked") == "true" || qv.Get("unblocked") == "1",
 		Query:         qv.Get("q"),
 		Limit:         limit,
 		ProjectIDs:    allowedProjects(r),
@@ -877,6 +880,9 @@ func (s *Server) handleUpdateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.hub.Broadcast("issue.updated", iss.ProjectID, iss)
+	if patch.StateID != nil {
+		s.publishBlocked(iss.ID) // finishing or reopening a blocker changes them
+	}
 	writeJSON(w, http.StatusOK, iss)
 }
 
@@ -887,10 +893,12 @@ func (s *Server) handleDeleteIssue(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	blocked, _ := s.store.BlockedIssueIDs(iss.ID)
 	if err := s.store.DeleteIssue(iss.ID); err != nil {
 		writeErr(w, err)
 		return
 	}
+	defer s.publishIssues(blocked...)
 	s.hub.Broadcast("issue.deleted", iss.ProjectID, map[string]string{"id": iss.ID, "identifier": iss.Identifier})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -1160,4 +1168,57 @@ func (s *Server) issueProject(issueID string) string {
 		return hiddenProject
 	}
 	return iss.ProjectID
+}
+
+func (s *Server) handleLinkIssues(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Kind   string `json:"kind"`
+		Target string `json:"target"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, err)
+		return
+	}
+	a, b, err := s.storeFor(r).LinkIssues(currentUser(r).ID, r.PathValue("ref"), body.Kind, body.Target)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.publishIssues(a, b)
+	iss, err := s.store.GetIssue(a)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, iss)
+}
+
+func (s *Server) handleUnlinkIssues(w http.ResponseWriter, r *http.Request) {
+	a, b, err := s.storeFor(r).UnlinkIssues(currentUser(r).ID, r.PathValue("ref"), r.PathValue("target"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.publishIssues(a, b)
+	iss, err := s.store.GetIssue(a)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, iss)
+}
+
+// publishIssues broadcasts the current state of each issue as issue.updated.
+func (s *Server) publishIssues(ids ...string) {
+	for _, id := range ids {
+		if iss, err := s.store.GetIssue(id); err == nil {
+			s.hub.Broadcast("issue.updated", iss.ProjectID, iss)
+		}
+	}
+}
+
+// publishBlocked refreshes the issues that issueID blocks.
+func (s *Server) publishBlocked(issueID string) {
+	ids, _ := s.store.BlockedIssueIDs(issueID)
+	s.publishIssues(ids...)
 }

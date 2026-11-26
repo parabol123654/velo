@@ -154,3 +154,52 @@ func TestMCPProjectToolsAndFriendlyRefs(t *testing.T) {
 		t.Fatal("unknown cycle name should fail")
 	}
 }
+
+// newMCPTestAPI starts a server with one admin, project VELO and the given
+// issue titles, and returns a client using the admin's API token.
+func newMCPTestAPI(t *testing.T, titles ...string) (*client.Client, *db.Store) {
+	t.Helper()
+	tmp := t.TempDir()
+	st, err := db.Open(filepath.Join(tmp, "velo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	admin, _ := st.CreateFirstAdmin("agent@velo.dev", "Agent", "secret123")
+	rawTok, _, _ := st.CreateAPIToken(admin.ID, "MCP", db.TokenScope{})
+	if _, err := st.CreateProject("VELO", "Velo", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, title := range titles {
+		if _, err := st.CreateIssue(admin.ID, db.CreateIssueInput{ProjectRef: "VELO", Title: title}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	distFS, _ := web.DistFS()
+	srv, _ := server.New(st, tmp, distFS)
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+	return client.New(ts.URL, rawTok), st
+}
+
+func TestMCPLinks(t *testing.T) {
+	api, _ := newMCPTestAPI(t, "Schema", "API on top")
+	text, err := dispatchTool(api, "link_issues", map[string]any{"ref": "VELO-2", "kind": "blocked_by", "target": "VELO-1"})
+	if err != nil || !strings.Contains(text, `"blocked_by"`) {
+		t.Fatalf("link_issues: %v %s", err, text)
+	}
+	text, _ = dispatchTool(api, "list_issues", map[string]any{"project": "VELO", "unblocked": true})
+	if !strings.Contains(text, "VELO-1") || strings.Contains(text, "VELO-2") {
+		t.Fatalf("unblocked filter: %s", text)
+	}
+	if text, _ := dispatchTool(api, "get_issue", map[string]any{"ref": "VELO-2"}); !strings.Contains(text, `"blocked_by_count": 1`) {
+		t.Fatalf("get_issue lacks blocked count: %s", text)
+	}
+	if _, err := dispatchTool(api, "unlink_issues", map[string]any{"ref": "VELO-1", "target": "VELO-2"}); err != nil {
+		t.Fatal(err)
+	}
+	text, _ = dispatchTool(api, "list_issues", map[string]any{"project": "VELO", "unblocked": true})
+	if !strings.Contains(text, "VELO-2") {
+		t.Fatalf("unlinked issue still blocked: %s", text)
+	}
+}

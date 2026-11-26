@@ -80,6 +80,8 @@ Usage:
   velo issue create --project KEY --title ...   Create a new issue (--parent for a sub-issue)
   velo issue update <KEY-N> [--state ...]       Update state, priority, title, desc, assignee, cycle, parent, labels
   velo issue delete <KEY-N>                     Delete an issue
+  velo issue link <KEY-N> blocks <KEY-M>        Link issues (blocks, blocked_by, relates, duplicates, duplicated_by)
+  velo issue unlink <KEY-N> <KEY-M>             Remove links between two issues
   velo issue comment <KEY-N> <BODY>             Add Markdown comment to an issue
   velo label create --project KEY <NAME>        Create a label [--color #hex]
   velo cycle create --project KEY <NAME>        Create a cycle [--start, --end, --status]
@@ -346,6 +348,7 @@ func runIssue(args []string) error {
 		cycle := fs.String("cycle", "", "Cycle name or \"none\"")
 		label := fs.String("label", "", "Label name")
 		parent := fs.String("parent", "", "Parent identifier (sub-issues) or \"root\"")
+		unblocked := fs.Bool("unblocked", false, "Only issues not blocked by unfinished issues")
 		prio := fs.Int("priority", -1, "Priority 0..4")
 		limit := fs.Int("limit", 50, "Max results")
 		asJSON := fs.Bool("json", false, "Output raw JSON")
@@ -365,7 +368,7 @@ func runIssue(args []string) error {
 		issues, err := newAPIClient(*u, *tok).ListIssues(client.IssueQuery{
 			Project: *project, State: *state, Category: *category, Query: *q,
 			Assignee: *assignee, Cycle: *cycle, Label: *label, Parent: *parent,
-			Priority: prioFilter, Limit: *limit,
+			Priority: prioFilter, Limit: *limit, Unblocked: *unblocked,
 		})
 		if err != nil {
 			return err
@@ -414,6 +417,15 @@ func runIssue(args []string) error {
 		fmt.Printf("State: %s | Priority: %s | Assignee: %s\n", it.StateName, priorityName(it.Priority), valueOrDash(it.AssigneeName))
 		if it.Description != "" {
 			fmt.Printf("\n%s\n", it.Description)
+		}
+		if it.BlockedByCount > 0 {
+			fmt.Printf("Blocked by %d unfinished issue(s)\n", it.BlockedByCount)
+		}
+		if len(it.Links) > 0 {
+			fmt.Println("\nLinks:")
+			for _, l := range it.Links {
+				fmt.Printf("  %s %s [%s] %s\n", strings.ReplaceAll(l.Kind, "_", " "), l.Issue.Identifier, l.Issue.StateName, l.Issue.Title)
+			}
 		}
 		if len(it.SubIssues) > 0 {
 			fmt.Println("\nSub-issues:")
@@ -520,6 +532,38 @@ func runIssue(args []string) error {
 			return err
 		}
 		fmt.Printf("Updated %s -> State: %s | Priority: %s | Assignee: %s\n", iss.Identifier, iss.StateName, priorityName(iss.Priority), valueOrDash(iss.AssigneeName))
+		return nil
+
+	case "link":
+		if len(args) < 4 {
+			return fmt.Errorf("usage: velo issue link <KEY-N> <blocks|blocked_by|relates|duplicates|duplicated_by> <KEY-M>")
+		}
+		fs := flag.NewFlagSet("issue link", flag.ContinueOnError)
+		u := fs.String("url", "", "Velo server URL")
+		tok := fs.String("token", "", "API token")
+		if err := fs.Parse(args[4:]); err != nil {
+			return err
+		}
+		if _, err := newAPIClient(*u, *tok).LinkIssues(args[1], args[2], args[3]); err != nil {
+			return err
+		}
+		fmt.Printf("Linked: %s %s %s\n", args[1], args[2], args[3])
+		return nil
+
+	case "unlink":
+		if len(args) < 3 {
+			return fmt.Errorf("usage: velo issue unlink <KEY-N> <KEY-M>")
+		}
+		fs := flag.NewFlagSet("issue unlink", flag.ContinueOnError)
+		u := fs.String("url", "", "Velo server URL")
+		tok := fs.String("token", "", "API token")
+		if err := fs.Parse(args[3:]); err != nil {
+			return err
+		}
+		if _, err := newAPIClient(*u, *tok).UnlinkIssues(args[1], args[2]); err != nil {
+			return err
+		}
+		fmt.Printf("Unlinked %s and %s\n", args[1], args[2])
 		return nil
 
 	case "delete":

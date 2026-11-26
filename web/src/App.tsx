@@ -655,6 +655,14 @@ export function App() {
                                         {iss.sub_issue_done_count}/{iss.sub_issue_count}
                                       </span>
                                     )}
+                                    {iss.blocked_by_count > 0 && (
+                                      <span
+                                        title="Blocked by an unfinished issue"
+                                        className="px-1.5 rounded bg-rose-500/10 text-rose-500 text-[10px] font-medium"
+                                      >
+                                        Blocked
+                                      </span>
+                                    )}
                                     {iss.comment_count > 0 && (
                                       <span className="inline-flex items-center gap-0.5 text-[10px] text-zinc-400">
                                         <MessageSquare className="w-3 h-3" />
