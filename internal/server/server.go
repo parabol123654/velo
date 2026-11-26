@@ -351,6 +351,9 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	if u.DisabledAt != nil {
+		s.hub.DisconnectUser(u.ID)
+	}
 	s.hub.Broadcast("user.updated", u)
 	writeJSON(w, http.StatusOK, u)
 }
@@ -361,6 +364,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.hub.DisconnectUser(id)
 	s.hub.Broadcast("user.deleted", map[string]string{"id": id})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -377,6 +381,7 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.hub.DisconnectUser(r.PathValue("id"))
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

@@ -15,31 +15,44 @@ type Event struct {
 
 type SSEHub struct {
 	mu      sync.Mutex
-	clients map[chan Event]struct{}
+	clients map[chan Event]string // channel -> user ID
 }
 
 func NewSSEHub() *SSEHub {
 	return &SSEHub{
-		clients: make(map[chan Event]struct{}),
+		clients: make(map[chan Event]string),
 	}
 }
 
-func (h *SSEHub) Subscribe() (chan Event, func()) {
+func (h *SSEHub) Subscribe(userID string) (chan Event, func()) {
 	ch := make(chan Event, 32)
 	h.mu.Lock()
-	h.clients[ch] = struct{}{}
+	h.clients[ch] = userID
 	h.mu.Unlock()
+	return ch, func() { h.remove(ch) }
+}
 
-	var once sync.Once
-	unsub := func() {
-		once.Do(func() {
-			h.mu.Lock()
-			delete(h.clients, ch)
-			h.mu.Unlock()
-			close(ch)
-		})
+// remove closes ch once; safe to call again after DisconnectUser closed it.
+func (h *SSEHub) remove(ch chan Event) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, ok := h.clients[ch]; ok {
+		delete(h.clients, ch)
+		close(ch)
 	}
-	return ch, unsub
+}
+
+// DisconnectUser ends every open stream of a user (disabled, deleted or
+// password reset), so they stop receiving events without waiting to reconnect.
+func (h *SSEHub) DisconnectUser(userID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for ch, uid := range h.clients {
+		if uid == userID {
+			delete(h.clients, ch)
+			close(ch)
+		}
+	}
 }
 
 func (h *SSEHub) Broadcast(eventType string, payload any) {
@@ -67,7 +80,11 @@ func (h *SSEHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	ch, unsub := h.Subscribe()
+	var userID string
+	if u := currentUser(r); u != nil {
+		userID = u.ID
+	}
+	ch, unsub := h.Subscribe(userID)
 	defer unsub()
 
 	fmt.Fprintf(w, "event: connected\ndata: {\"ok\":true}\n\n")

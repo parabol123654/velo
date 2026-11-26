@@ -1,11 +1,14 @@
 package server
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // call sends a JSON request with a bearer token and returns status and body.
@@ -96,5 +99,42 @@ func TestUserManagementHTTP(t *testing.T) {
 	}
 	if code, _ := call(t, "DELETE", ts.URL+"/api/users/"+dev.ID, admin, ""); code != http.StatusNotFound {
 		t.Fatalf("delete twice: %d", code)
+	}
+}
+
+func TestDisableClosesSSEStream(t *testing.T) {
+	ts, srv := newTestServer(t)
+	_, body := call(t, "POST", ts.URL+"/api/auth/setup", "", `{"email":"admin@velo.dev","name":"Admin","password":"password123"}`)
+	admin := sessionOf(t, body)
+	dev, err := srv.store.CreateUserDirect("dev@velo.dev", "Dev", "devpass1", "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, body = call(t, "POST", ts.URL+"/api/auth/login", "", `{"email":"dev@velo.dev","password":"devpass1"}`)
+	devSess := sessionOf(t, body)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", ts.URL+"/api/events", nil)
+	req.Header.Set("Authorization", "Bearer "+devSess)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("SSE connect: %v", err)
+	}
+	defer resp.Body.Close()
+	rd := bufio.NewReader(resp.Body)
+	if line, _ := rd.ReadString('\n'); !strings.Contains(line, "connected") {
+		t.Fatalf("first SSE line = %q", line)
+	}
+
+	if code, _ := call(t, "PATCH", ts.URL+"/api/users/"+dev.ID, admin, `{"disabled":true}`); code != http.StatusOK {
+		t.Fatalf("disable: %d", code)
+	}
+	// The server must end the stream: reading reaches EOF well before the 5s timeout.
+	if _, err := io.ReadAll(rd); err != nil {
+		t.Fatalf("stream did not end cleanly after disable: %v", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("stream stayed open until the client timeout")
 	}
 }
