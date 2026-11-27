@@ -100,7 +100,7 @@ describe('applyEvent', () => {
   });
 
   it('falls back to a reload for structural events', () => {
-    for (const type of ['project.created', 'project.deleted', 'state.updated', 'cycle.deleted', 'user.updated']) {
+    for (const type of ['project.created', 'project.deleted', 'state.updated', 'cycle.deleted', 'user.updated', 'user.created', 'label.created', 'label.deleted']) {
       expect(applyEvent([], { type, payload: {} }, P).reload).toBe(true);
     }
   });

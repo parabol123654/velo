@@ -70,9 +70,10 @@ Comments and activities made through an API token record the token's name (`via`
 | `issue.deleted` | `{id, identifier}` | Remove the card, detach its sub-issues |
 | `comment.created`, `comment.deleted` | comment, or `{id, issue_id}` | Adjust the card's comment count |
 | `comment.updated` | comment | Nothing on the board; an open drawer refreshes |
-| `project.*`, `state.updated`, `cycle.*`, `user.updated`, `user.deleted` | object | Debounced full workspace reload |
+| `project.*`, `state.updated`, `cycle.*`, `label.created`, `user.created`, `user.updated`, `user.deleted` | object | Debounced full workspace reload |
+| `label.deleted` | `{id}` | Debounced full workspace reload |
 
-Linking, unlinking, claiming and checklist ticks send `issue.updated` for every issue whose data changed. Label changes and new users (created by an admin or through an invite) are not broadcast yet; see [Known gaps](#known-gaps).
+Linking, unlinking, claiming and checklist ticks send `issue.updated` for every issue whose data changed. New users are broadcast whether an admin created them or they accepted an invite.
 
 Each event belongs to a project (user events to none); a project-restricted token's stream only gets its projects' events. The board logic is the pure function `applyEvent` in `web/src/live.ts`. A slow client may miss events (the hub drops them when its buffer is full); the UI reloads once whenever the stream reconnects.
 
@@ -90,7 +91,6 @@ Each event belongs to a project (user events to none); a project-restricted toke
 
 Places where the code falls short of this spec or of the rules in [CONTRIBUTING.md](./CONTRIBUTING.md). Each is small; fix it test-first (the "Done when" line is the test), then delete the entry in the same PR. Last reviewed at commit `ceaf004` on 2026-11-26.
 
-5. **Some mutations do not broadcast.** `handleCreateLabel` and `handleDeleteLabel` never call `hub.Broadcast`; neither do `handleCreateUser` and `handleAcceptInvite`. Open boards miss new labels and new assignees until reload. Fix: broadcast `label.created`, `label.deleted` (project-scoped) and `user.created`, and let `applyEvent` treat them like `project.*`. Done when: server tests assert the events and `live.test.ts` covers them.
 6. **Activity history is incomplete.** Description, labels and parent changes leave no activity. A link is logged only on the issue named in the request, and an unlink records the other issue but not the link kind. Fix: log `description` (field only, no text), `labels` (old and new names) and `parent` (old and new identifier); log links and unlinks on both issues with the kind. Done when: a test changes each field and finds one activity per change and none for a no-op, and both linked issues show the link and the unlink.
 7. **Export drops issue links.** `ExportProjectJSON` and `ImportProjectJSON` (`internal/db/export.go`) ignore `issue_links`, so a JSON round trip loses blockers. Fix: export links by identifier and recreate them on import after all issues exist. Done when: the round-trip test in `db_test.go` includes a `blocks` and a `relates` link and they come back.
 8. **Vietnamese search does not fold accents.** The default `unicode61` tokenizer (`remove_diacritics 1`) leaves letters with two marks (`ậ`, `ố`) and `đ` unfolded, so `dang nhap` does not find `đăng nhập`. The fix needs a decision recorded here first, because it rebuilds the FTS table (derived data, so invariant 4 still holds): recreate `issues_fts` with `tokenize='unicode61 remove_diacritics 2'`, and fold `đ`/`Đ` to `d` in the indexed text and the query. Done when: a test finds `đăng nhập` with `dang nhap`, and a database created by the previous release opens and is reindexed.
