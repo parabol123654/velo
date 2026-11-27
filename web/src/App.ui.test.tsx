@@ -9,6 +9,7 @@ import type { Issue } from './api';
 
 const me = { id: 'u1', email: 'me@velo.dev', name: 'Me', role: 'admin', created_at: '' };
 const project = { id: 'p1', key: 'DEV', name: 'Dev', description: '', issue_seq: 3, issue_count: 3, open_issue_count: 3, created_at: '' };
+const ops = { id: 'p2', key: 'OPS', name: 'Ops', description: '', issue_seq: 0, issue_count: 0, open_issue_count: 0, created_at: '' };
 const todo = { id: 's1', project_id: 'p1', name: 'Todo', category: 'unstarted', color: '#888', position: 1 };
 const done = { id: 's2', project_id: 'p1', name: 'Done', category: 'completed', color: '#0a0', position: 2 };
 
@@ -33,14 +34,16 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
   calls.push({ method, url: url.pathname + url.search, body });
   const path = url.pathname;
   if (path === '/api/auth/status') return json(200, { has_users: true, user: me });
-  if (path === '/api/projects') return json(200, [project]);
+  if (path === '/api/projects') return json(200, [project, ops]);
   if (path === '/api/users') return json(200, [me]);
   if (path === '/api/filters' && method === 'GET') return json(200, []);
   if (path === '/api/filters' && method === 'POST') return json(201, { id: 'f1', ...body, position: 1000, created_at: '' });
   if (path === '/api/projects/DEV') return json(200, { project, states: [todo, done], labels: [], cycles: [] });
+  if (path === '/api/projects/OPS') return json(200, { project: ops, states: [], labels: [], cycles: [] });
   if (path === '/api/search') return json(200, []);
   if (path === '/api/issues' && method === 'GET') {
     const q = url.searchParams.get('q');
+    if (url.searchParams.get('project') === 'OPS') return json(200, []);
     if (!q) return json(200, issues);
     if (q.startsWith('bad:')) return json(400, { error: 'validation error: unknown filter "bad:"' });
     if (q === 'assignee:me') return json(200, issues.filter((i) => i.assignee_id === 'u1'));
@@ -81,23 +84,30 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// Renders the app and waits until it stops loading: the workspace loads twice
-// at start (loadWorkspace changes with activeKey), and a late second load
-// would overwrite what a test does on the board (#39).
 async function renderBoard() {
   render(<App />);
   await screen.findByText('Charlie');
-  let seen = -1;
-  await waitFor(
-    () => {
-      const now = calls.length;
-      const idle = now === seen;
-      seen = now;
-      expect(idle).toBe(true);
-    },
-    { interval: 50 }
-  );
 }
+
+const loads = (key: string) => calls.filter((c) => c.method === 'GET' && c.url === `/api/issues?project=${key}`).length;
+
+// #39: the workspace loads once at start and once per project switch.
+describe('workspace loading', () => {
+  it('loads the issues once at start', async () => {
+    await renderBoard();
+    await new Promise((r) => setTimeout(r, 200)); // time for a stray second load
+    expect(loads('DEV')).toBe(1);
+  });
+
+  it('loads the issues once when switching project, and not the old project again', async () => {
+    await renderBoard();
+    await userEvent.click(screen.getByRole('button', { name: /OPS/ }));
+    await waitFor(() => expect(screen.queryByText('Charlie')).toBeNull());
+    await new Promise((r) => setTimeout(r, 200)); // time for a stray second load
+    expect(loads('OPS')).toBe(1);
+    expect(loads('DEV')).toBe(1);
+  });
+});
 
 const card = (title: string) => screen.getByText(title).closest('[draggable]') as HTMLElement;
 const patches = () => calls.filter((c) => c.method === 'PATCH' && c.url.startsWith('/api/issues/'));
