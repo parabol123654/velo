@@ -341,11 +341,37 @@ func (s *Store) ListIssues(f IssueFilter) ([]Issue, error) {
 		args = append(args, f.AssigneeID, f.AssigneeID)
 	}
 	if f.Priority != nil {
-		clauses = append(clauses, "i.priority = ?")
+		op := f.PriorityOp
+		switch op {
+		case "":
+			op = "="
+		case "=", ">", ">=", "<", "<=":
+		default:
+			return nil, fmt.Errorf("%w: invalid priority comparison %q", ErrValidation, op)
+		}
+		clauses = append(clauses, "i.priority "+op+" ?")
 		args = append(args, *f.Priority)
+	}
+	switch f.Status {
+	case "":
+	case "open":
+		clauses = append(clauses, "ws.category NOT IN ('completed', 'canceled')")
+	case "closed":
+		clauses = append(clauses, "ws.category IN ('completed', 'canceled')")
+	default:
+		return nil, fmt.Errorf("%w: status must be open or closed", ErrValidation)
+	}
+	if f.Blocked {
+		clauses = append(clauses, openBlockersSQL+" > 0")
+	}
+	for _, l := range f.Labels {
+		clauses = append(clauses, "EXISTS (SELECT 1 FROM issue_labels il JOIN labels lb ON lb.id = il.label_id WHERE il.issue_id = i.id AND (lb.id = ? OR lb.name = ? COLLATE NOCASE))")
+		args = append(args, l, l)
 	}
 	if f.ParentID == "root" {
 		clauses = append(clauses, "i.parent_id IS NULL")
+	} else if f.ParentID == "any" {
+		clauses = append(clauses, "i.parent_id IS NOT NULL")
 	} else if f.ParentID != "" {
 		clauses = append(clauses, "i.parent_id IN (SELECT id FROM issues WHERE id = ? OR identifier = ? COLLATE NOCASE)")
 		args = append(args, f.ParentID, f.ParentID)
@@ -401,16 +427,33 @@ func (s *Store) ListIssues(f IssueFilter) ([]Issue, error) {
 	return out, nil
 }
 
-// SearchIssues runs a full-text search; projectIDs, when non-nil, limits it to those projects.
+// SearchIssues is SearchIssuesFor without a user: "assignee:me" is an error.
 func (s *Store) SearchIssues(query string, limit int, projectIDs []string) ([]Issue, error) {
-	query = strings.TrimSpace(query)
-	if query == "" {
+	return s.SearchIssuesFor(query, limit, projectIDs, "")
+}
+
+// SearchIssuesFor runs a query in the ParseIssueQuery syntax for userID
+// ("assignee:me"). projectIDs, when non-nil, limits it to those projects.
+// An empty query finds nothing; limit defaults to 20, at most 50.
+func (s *Store) SearchIssuesFor(query string, limit int, projectIDs []string, userID string) ([]Issue, error) {
+	f, err := ParseIssueQuery(query)
+	if err != nil {
+		return nil, err
+	}
+	if f.IsEmpty() {
 		return []Issue{}, nil
+	}
+	if strings.EqualFold(f.AssigneeID, "me") {
+		if userID == "" {
+			return nil, fmt.Errorf("%w: assignee:me needs a signed-in user", ErrValidation)
+		}
+		f.ResolveMe(userID)
 	}
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
-	return s.ListIssues(IssueFilter{Query: query, Limit: limit, ProjectIDs: projectIDs})
+	f.Limit, f.ProjectIDs = limit, projectIDs
+	return s.ListIssues(f)
 }
 
 func (s *Store) UpdateIssue(actorID, ref string, patch UpdateIssueInput) (*Issue, error) {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -72,14 +73,18 @@ func TestQASearchVietnameseHTTP(t *testing.T) {
 	}
 }
 
-// A lone double quote in the search box returns an empty result, not a 500.
+// A lone double quote in the search box is a 400 naming the unclosed quote
+// (query syntax, #17), not a 500; a closed pair returns an empty result.
 func TestQASearchQuoteOnlyHTTP(t *testing.T) {
 	ts, _ := newTestServer(t)
 	_, body := call(t, "POST", ts.URL+"/api/auth/setup", "", `{"email":"admin@velo.dev","name":"Admin","password":"password123"}`)
 	admin := sessionOf(t, body)
 	call(t, "POST", ts.URL+"/api/projects", admin, `{"key":"DEV","name":"Dev"}`)
 	call(t, "POST", ts.URL+"/api/issues", admin, `{"project_ref":"DEV","title":"đăng nhập"}`)
-	if code, b := call(t, "GET", ts.URL+"/api/search?q="+url.QueryEscape(`"`), admin, ""); code != http.StatusOK {
+	if code, b := call(t, "GET", ts.URL+"/api/search?q="+url.QueryEscape(`"`), admin, ""); code != http.StatusBadRequest || !strings.Contains(b, "unclosed quote") {
 		t.Errorf(`GET /api/search?q=": %d %s`, code, b)
+	}
+	if code, b := call(t, "GET", ts.URL+"/api/search?q="+url.QueryEscape(`""`), admin, ""); code != http.StatusOK {
+		t.Errorf(`GET /api/search?q="": %d %s`, code, b)
 	}
 }

@@ -60,6 +60,7 @@ Create an API token in Settings, then:
 ./velo cycle update --project DEV "Sprint 1" --status completed   # only the given fields change
 ./velo project export DEV > DEV.md      # or --format json
 ./velo search "login"
+./velo search 'assignee:me is:open priority:>=high login'   # filters + text, same syntax in MCP list_issues
 ```
 
 `VELO_URL` and `VELO_TOKEN` environment variables override the saved config.

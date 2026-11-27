@@ -1,6 +1,7 @@
 package db
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -83,8 +84,18 @@ func TestQASearchSyntaxCharactersNeverError(t *testing.T) {
 		`{title}: đăng`, `^đăng`, `đăng + nhập`, `'`, `%`, `_`, `\`, `đ`, `Đ`, `ð`,
 		"\u0323", "\u0300\u0301", `đ:đ`, `🙂`, `.`, `đ-đ`,
 	} {
-		if _, err := st.SearchIssues(q, 10, nil); err != nil {
-			t.Errorf("search %q: %v", q, err)
+		// In the query syntax (#17) an unclosed quote or an unknown ASCII
+		// "key:" is a validation error (400); everything else must work.
+		_, err := st.SearchIssues(q, 10, nil)
+		switch q {
+		case `"đăng`, `đăng"`, `title:đăng`:
+			if !errors.Is(err, ErrValidation) {
+				t.Errorf("search %q: want a validation error, got %v", q, err)
+			}
+		default:
+			if err != nil {
+				t.Errorf("search %q: %v", q, err)
+			}
 		}
 	}
 	// Quoted and parenthesised words still find the issue.
@@ -96,14 +107,18 @@ func TestQASearchSyntaxCharactersNeverError(t *testing.T) {
 }
 
 // A query of only quotes (no FTS terms left) or with a NUL byte returns no
-// hits, not an error. Both used to fail with "SQL logic error".
+// hits, not an error. Both used to fail with "SQL logic error". A lone quote
+// is unclosed, which the query syntax (#17) reports as a validation error.
 func TestQASearchQuoteOnlyQueryReturnsNoError(t *testing.T) {
 	st, admin := viStore(t)
 	mustIssue(t, st, admin.ID, "đăng nhập", "")
-	for _, q := range []string{`"`, `""`, `" "`, "đăng\x00nhập"} {
+	for _, q := range []string{`""`, `" "`, "đăng\x00nhập"} {
 		if _, err := st.SearchIssues(q, 10, nil); err != nil {
 			t.Errorf("search %q: %v", q, err)
 		}
+	}
+	if _, err := st.SearchIssues(`"`, 10, nil); !errors.Is(err, ErrValidation) {
+		t.Errorf(`search ": want a validation error, got %v`, err)
 	}
 }
 
