@@ -106,6 +106,7 @@ var timeLayouts = []string{
 	"02/Jan/06 15:04",
 	"02/Jan/2006 3:04 PM",
 	"02/Jan/2006 15:04",
+	"Mon Jan 02 2006 15:04:05 GMT-0700", // JavaScript's Date.toString, without the zone name
 	"2006-01-02",
 }
 
@@ -113,6 +114,9 @@ var timeLayouts = []string{
 // then uses the import time.
 func parseTime(v string) time.Time {
 	v = strings.TrimSpace(v)
+	if i := strings.Index(v, " ("); i > 0 && strings.HasSuffix(v, ")") {
+		v = v[:i] // "... GMT+0700 (Indochina Time)"
+	}
 	for _, layout := range timeLayouts {
 		if t, err := time.Parse(layout, v); err == nil {
 			return t.UTC()

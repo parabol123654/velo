@@ -20,6 +20,7 @@ import (
 const importUsage = `usage: velo import <source> ... --project KEY [--dry-run]
   velo import github OWNER/REPO --project KEY  issues, comments, milestones and sub-issues of a GitHub repository
   velo import jira EXPORT.csv --project KEY    a Jira CSV export (all fields)
+  velo import linear EXPORT.csv --project KEY  a Linear CSV export (no comments: Linear leaves them out)
   velo import file BATCH.json --project KEY    a batch in the API's import format (see SPEC.md)`
 
 func runImport(args []string) error {
@@ -83,6 +84,30 @@ func runImport(args []string) error {
 		}
 		defer f.Close()
 		b, warnings, err := (&importer.JiraCSV{BaseURL: *site, Users: users, StateMap: states}).Batch(f)
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		printWarnings(warnings)
+		return common.send(b)
+
+	case "linear":
+		fs, common := importFlags("import linear")
+		workspace := fs.String("linear-workspace", "", "Linear workspace URL name (linear.app/NAME), to link each issue to its original")
+		users := userMap{}
+		fs.Var(users, "map-user", "NAME=EMAIL: assign NAME's issues to the Velo user with EMAIL (repeatable)")
+		path, err := parseWithArg(fs, args[1:], "velo import linear EXPORT.csv --project KEY [--map-user NAME=EMAIL]... [--dry-run]")
+		if err != nil {
+			return err
+		}
+		if err := common.check(); err != nil {
+			return err
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		b, warnings, err := (&importer.LinearCSV{Workspace: *workspace, Users: users}).Batch(f)
 		if err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}
