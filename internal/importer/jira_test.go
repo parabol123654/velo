@@ -51,7 +51,8 @@ func TestJiraBatch(t *testing.T) {
 	if two.StateCategory != "canceled" || two.Priority != 1 || two.Assignee != "" || !two.CreatedAt.Equal(time.Date(2024, 3, 3, 20, 30, 0, 0, time.UTC)) {
 		t.Fatalf("WEB-2 (Won't Do): %+v", two)
 	}
-	if three.State != "In Review" || three.StateCategory != "started" || three.Assignee != "Bob Smith" || three.Cycle != "Sprint 2" || three.Priority != 2 {
+	// A mapped status is taken as given, with no category.
+	if three.State != "In Review" || three.StateCategory != "" || three.Assignee != "Bob Smith" || three.Cycle != "Sprint 2" || three.Priority != 2 {
 		t.Fatalf("WEB-3: %+v", three)
 	}
 	if four.Parent != "WEB-3" || four.Priority != 4 || four.StateCategory != "unstarted" {
@@ -84,5 +85,40 @@ func TestJiraBadFiles(t *testing.T) {
 	b, _, err := (&JiraCSV{}).Batch(strings.NewReader("Summary,Issue key\nOnly,WEB-9\n,WEB-10\n"))
 	if err != nil || len(b.Issues) != 2 || b.Issues[1].Title != "WEB-10" {
 		t.Fatalf("minimal file (an empty summary falls back to the key): %+v %v", b, err)
+	}
+}
+
+// Review findings: Jira's usual "Done" with a resolution like "Won't Do" is
+// canceled even though the Velo project has a Done state; a --state-map
+// entry sends no category, so a mapped state the project lacks is an error;
+// unreadable dates and unknown priorities are reported; empty spreadsheet
+// rows are skipped; a semicolon-separated file says so.
+func TestJiraReviewFindings(t *testing.T) {
+	csv := "Summary,Issue key,Status,Status Category,Resolution,Priority,Created,Comment\n" +
+		"Dropped,WEB-1,Done,Done,Won't Do,P1,02/Mär/24 10:00,\"bad date;u;text\"\n" +
+		"Mapped,WEB-2,QA,In Progress,,High,02/Mar/2024 10:00,\n" +
+		",,,,,,,\n"
+	j := &JiraCSV{StateMap: map[string]string{"qa": "Testing", "nosuch": "X"}}
+	b, warnings, err := j.Batch(strings.NewReader(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Issues) != 2 {
+		t.Fatalf("issues: %d", len(b.Issues))
+	}
+	if one := b.Issues[0]; one.State != "" || one.StateCategory != "canceled" {
+		t.Fatalf("Done + Won't Do: state %q category %q", one.State, one.StateCategory)
+	}
+	if two := b.Issues[1]; two.State != "Testing" || two.StateCategory != "" || !two.CreatedAt.Equal(time.Date(2024, 3, 2, 10, 0, 0, 0, time.UTC)) {
+		t.Fatalf("mapped: %+v", two)
+	}
+	all := strings.Join(warnings, "\n")
+	for _, want := range []string{`Created`, `"02/Mär/24 10:00"`, `unknown priorities: "P1"`, `--state-map NOSUCH`} {
+		if !strings.Contains(all, want) {
+			t.Errorf("warnings lack %q:\n%s", want, all)
+		}
+	}
+	if _, _, err := (&JiraCSV{}).Batch(strings.NewReader("Summary;Issue key\nA;WEB-1\n")); err == nil || !strings.Contains(err.Error(), "semicolons") {
+		t.Fatalf("semicolon file: %v", err)
 	}
 }

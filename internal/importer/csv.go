@@ -5,6 +5,8 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,7 +35,15 @@ func readTable(r io.Reader, required ...string) (*table, error) {
 	if err != nil {
 		return nil, fmt.Errorf("not a CSV file: %w", err)
 	}
-	t := &table{cols: map[string][]int{}, rows: records[1:]}
+	if len(records[0]) == 1 && strings.Contains(records[0][0], ";") {
+		return nil, fmt.Errorf("the file looks separated by semicolons; export it as CSV with commas")
+	}
+	t := &table{cols: map[string][]int{}}
+	for _, row := range records[1:] {
+		if strings.TrimSpace(strings.Join(row, "")) != "" { // spreadsheets leave rows of empty cells
+			t.rows = append(t.rows, row)
+		}
+	}
 	for i, name := range records[0] {
 		key := strings.ToLower(strings.TrimSpace(name))
 		t.cols[key] = append(t.cols[key], i)
@@ -93,6 +103,7 @@ var timeLayouts = []string{
 	"2/Jan/06 3:04 PM",
 	"02/Jan/06 15:04",
 	"02/Jan/2006 3:04 PM",
+	"02/Jan/2006 15:04",
 	"2006-01-02",
 }
 
@@ -106,6 +117,53 @@ func parseTime(v string) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+// notes collects warnings, each said once.
+type notes struct {
+	list []string
+	seen map[string]bool
+}
+
+func (n *notes) add(key, msg string) {
+	if n.seen == nil {
+		n.seen = map[string]bool{}
+	}
+	if !n.seen[key] {
+		n.seen[key] = true
+		n.list = append(n.list, msg)
+	}
+}
+
+// date reads a date column, noting the first value of that column it cannot
+// read: those issues and comments get the import time instead.
+func (n *notes) date(column, v string) time.Time {
+	at := parseTime(v)
+	if at.IsZero() && strings.TrimSpace(v) != "" {
+		n.add("date "+column, fmt.Sprintf("%s: dates like %q could not be read; those get the import time", column, v))
+	}
+	return at
+}
+
+// priority maps a priority name, noting names it does not know.
+func (n *notes) priority(v string, unknown map[string]bool) int {
+	p := priorityOf(v)
+	if v = strings.TrimSpace(v); p == 0 && v != "" && !strings.EqualFold(v, "no priority") && !strings.EqualFold(v, "none") {
+		unknown[v] = true
+	}
+	return p
+}
+
+func (n *notes) unknownPriorities(unknown map[string]bool) {
+	if len(unknown) == 0 {
+		return
+	}
+	var names []string
+	for v := range unknown {
+		names = append(names, strconv.Quote(v))
+	}
+	sort.Strings(names)
+	n.add("priorities", "unknown priorities: "+strings.Join(names, ", ")+"; those issues get no priority")
 }
 
 // keepInside drops parents and links that name issues outside the batch,

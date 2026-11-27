@@ -29,6 +29,9 @@ func (j *JiraCSV) Batch(r io.Reader) (*db.ImportBatch, []string, error) {
 		return nil, nil, err
 	}
 	b := &db.ImportBatch{Source: "jira"}
+	var w notes
+	unknownPriority := map[string]bool{}
+	usedMap := map[string]bool{}
 	keyOfID := map[string]string{} // Jira issue id -> key, for parents given by id
 	for _, row := range t.rows {
 		if id := t.get(row, "Issue id"); id != "" {
@@ -45,9 +48,9 @@ func (j *JiraCSV) Batch(r io.Reader) (*db.ImportBatch, []string, error) {
 			Title:       t.get(row, "Summary"),
 			Description: t.get(row, "Description"),
 			Author:      t.get(row, "Reporter"),
-			Priority:    priorityOf(t.get(row, "Priority")),
+			Priority:    w.priority(t.get(row, "Priority"), unknownPriority),
 			Labels:      t.all(row, "Labels"),
-			CreatedAt:   parseTime(t.get(row, "Created")),
+			CreatedAt:   w.date("Created", t.get(row, "Created")),
 		}
 		if it.Title == "" {
 			it.Title = key
@@ -56,6 +59,7 @@ func (j *JiraCSV) Batch(r io.Reader) (*db.ImportBatch, []string, error) {
 			it.URL = strings.TrimRight(j.BaseURL, "/") + "/browse/" + key
 		}
 		it.State, it.StateCategory = j.state(t.get(row, "Status"), t.get(row, "Status Category"), t.get(row, "Resolution"))
+		usedMap[strings.ToLower(t.get(row, "Status"))] = true
 		if sprints := t.all(row, "Sprint"); len(sprints) > 0 {
 			it.Cycle = sprints[len(sprints)-1] // the latest sprint
 		}
@@ -76,21 +80,28 @@ func (j *JiraCSV) Batch(r io.Reader) (*db.ImportBatch, []string, error) {
 			break
 		}
 		for i, c := range t.all(row, "Comment") {
-			it.Comments = append(it.Comments, jiraComment(key, i+1, c))
+			it.Comments = append(it.Comments, jiraComment(key, i+1, c, &w))
 		}
 		b.Issues = append(b.Issues, it)
 		b.Links = append(b.Links, jiraLinks(t, row, key)...)
 	}
-	return b, keepInside(b), nil
+	w.unknownPriorities(unknownPriority)
+	for status, state := range j.StateMap {
+		if !usedMap[status] {
+			w.add("map "+status, fmt.Sprintf("--state-map %s=%s: no issue in the file has that status", strings.ToUpper(status), state))
+		}
+	}
+	return b, append(w.list, keepInside(b)...), nil
 }
 
-// state maps a Jira status. A --state-map entry or a Velo state of the same
-// name wins; otherwise the status category decides, or the status name when
-// the export has no Status Category column.
+// state maps a Jira status. A --state-map entry is taken as given, with no
+// category, so a state the project lacks is an error rather than a guess.
+// Otherwise the status name is tried first and the category is the
+// fallback, except that a done issue with a resolution like "Won't Do" is
+// canceled whatever its status is called: Jira's own workflow calls it Done.
 func (j *JiraCSV) state(status, category, resolution string) (name, cat string) {
-	name = status
 	if mapped, ok := j.StateMap[strings.ToLower(status)]; ok {
-		name = mapped
+		return mapped, ""
 	}
 	switch strings.ToLower(category) {
 	case "to do", "new":
@@ -112,18 +123,18 @@ func (j *JiraCSV) state(status, category, resolution string) (name, cat string) 
 		}
 	}
 	if cat == "completed" && jiraCanceled[strings.ToLower(resolution)] {
-		cat = "canceled"
+		return "", "canceled"
 	}
-	return name, cat
+	return status, cat
 }
 
 // jiraComment reads "DATE;AUTHOR;BODY". Jira's CSV has no comment IDs, so
 // the external ID is the comment's place on the issue.
-func jiraComment(key string, n int, raw string) db.ImportComment {
-	c := db.ImportComment{ExternalID: fmt.Sprintf("%s#c%d", key, n), Body: raw}
+func jiraComment(key string, i int, raw string, n *notes) db.ImportComment {
+	c := db.ImportComment{ExternalID: fmt.Sprintf("%s#c%d", key, i), Body: raw}
 	parts := strings.SplitN(raw, ";", 3)
 	if len(parts) == 3 {
-		if at := parseTime(parts[0]); !at.IsZero() {
+		if at := n.date("Comment", parts[0]); !at.IsZero() {
 			c.CreatedAt, c.Author, c.Body = at, strings.TrimSpace(parts[1]), parts[2]
 		}
 	}
