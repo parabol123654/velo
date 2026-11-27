@@ -21,10 +21,9 @@ import (
 	"github.com/parabol123654/velo/internal/db"
 	"github.com/parabol123654/velo/internal/mcp"
 	"github.com/parabol123654/velo/internal/server"
+	"github.com/parabol123654/velo/internal/version"
 	"github.com/parabol123654/velo/web"
 )
-
-const Version = "0.2.0"
 
 func Run(args []string) error {
 	if len(args) == 0 {
@@ -58,7 +57,7 @@ func Run(args []string) error {
 	case "agent":
 		return runAgent(args[1:])
 	case "version", "-v", "--version":
-		fmt.Printf("velo v%s\n", Version)
+		fmt.Printf("velo %s\n", version.Version)
 		return nil
 	case "help", "-h", "--help":
 		printUsage()
@@ -147,7 +146,7 @@ func runServe(args []string) error {
 		displayURL = "http://" + displayURL
 	}
 
-	fmt.Printf("⚡ Velo v%s running at %s\n", Version, displayURL)
+	fmt.Printf("⚡ Velo %s running at %s\n", version.Version, displayURL)
 	fmt.Printf("   Data directory : %s\n", *dataDir)
 	fmt.Printf("   MCP command    : velo mcp\n")
 	if *ghSecret != "" {
