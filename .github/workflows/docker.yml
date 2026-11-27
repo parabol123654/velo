@@ -9,6 +9,7 @@ on:
       - .dockerignore
       - .github/workflows/docker.yml
       - go.mod
+      - go.sum
       - web/package.json
       - web/package-lock.json
   push:
@@ -17,6 +18,13 @@ on:
       - Dockerfile
       - .dockerignore
       - .github/workflows/docker.yml
+      - go.mod
+      - go.sum
+      - web/package.json
+      - web/package-lock.json
+  # The base images use moving tags; catch an upstream change weekly.
+  schedule:
+    - cron: "17 3 * * 1"
   workflow_dispatch:
 
 jobs:
