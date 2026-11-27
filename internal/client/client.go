@@ -323,6 +323,23 @@ func (c *Client) ImportProject(bundle []byte) (*db.Project, error) {
 	return &out, json.Unmarshal(raw, &out)
 }
 
+// ImportIssues posts a batch of issues from another tracker to a project
+// (POST /api/projects/{ref}/import). A big batch takes a while, so this call
+// waits longer than the others.
+func (c *Client) ImportIssues(project string, batch *db.ImportBatch, dryRun bool) (*db.ImportResult, error) {
+	path := "/api/projects/" + url.PathEscape(project) + "/import"
+	if dryRun {
+		path += "?dry_run=1"
+	}
+	long := *c
+	long.http = &http.Client{Timeout: 10 * time.Minute}
+	var out db.ImportResult
+	if err := long.do("POST", path, batch, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // LinkIssues records "ref kind target", kind being blocks, blocked_by,
 // relates, duplicates or duplicated_by.
 func (c *Client) LinkIssues(ref, kind, target string) (*db.Issue, error) {

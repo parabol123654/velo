@@ -271,6 +271,21 @@ CREATE TABLE IF NOT EXISTS attachments (
 	created_at   DATETIME NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_attachments_issue ON attachments(issue_id);
+
+-- What velo import made from which source item (#16), so a rerun skips it.
+-- Comments use the external ID "comment:<id>". Rows go with their issue or comment.
+CREATE TABLE IF NOT EXISTS import_refs (
+	project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+	source      TEXT NOT NULL,
+	external_id TEXT NOT NULL,
+	issue_id    TEXT REFERENCES issues(id) ON DELETE CASCADE,
+	comment_id  TEXT REFERENCES comments(id) ON DELETE CASCADE,
+	created_at  DATETIME NOT NULL,
+	PRIMARY KEY (project_id, source, external_id),
+	CHECK ((issue_id IS NULL) <> (comment_id IS NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_import_refs_issue ON import_refs(issue_id);
+CREATE INDEX IF NOT EXISTS idx_import_refs_comment ON import_refs(comment_id);
 `
 
 func (s *Store) migrate() error {

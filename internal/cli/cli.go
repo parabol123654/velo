@@ -56,6 +56,8 @@ func Run(args []string) error {
 		return runUploads(args[1:])
 	case "agent":
 		return runAgent(args[1:])
+	case "import":
+		return runImport(args[1:])
 	case "version", "-v", "--version":
 		fmt.Printf("velo %s\n", version.Version)
 		return nil
@@ -103,6 +105,7 @@ Usage:
   velo backup [--data ./data] <FILE.db>         Copy the database safely, even while serving
   velo uploads prune [--data ./data] [--apply]  List (or with --apply, delete) uploads nothing uses
   velo agent --cmd '<command>' [--label agent]  Run a local coding agent on issues labeled for it
+  velo import file <BATCH.json> --project KEY   Import issues from another tracker [--dry-run]; reruns skip what exists
   velo version                                  Print version
 `)
 }

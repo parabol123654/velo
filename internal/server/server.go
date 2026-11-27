@@ -246,6 +246,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/cycles/{id}", s.requireAuth(s.inProject("cycle"), s.handleDeleteCycle))
 	s.mux.HandleFunc("GET /api/projects/{ref}/export", s.requireAuth(s.inProject("project"), s.handleExportProject))
 	s.mux.HandleFunc("POST /api/projects/import", s.requireAuth(allProjects, s.handleImportProject))
+	s.mux.HandleFunc("POST /api/projects/{ref}/import", s.requireAuth(s.inProject("project"), s.handleImportIssues))
 
 	// Issues, Search, Comments, Activities & Attachments
 	s.mux.HandleFunc("GET /api/search", s.requireAuth(filtered, s.handleSearch))
@@ -808,6 +809,38 @@ func (s *Server) handleImportProject(w http.ResponseWriter, r *http.Request) {
 	}
 	s.hub.Broadcast("project.created", proj.ID, proj)
 	writeJSON(w, http.StatusCreated, proj)
+}
+
+// maxImportBody caps one import batch (#16); velo import splits bigger imports.
+const maxImportBody = 32 << 20
+
+// handleImportIssues imports a batch of issues from another tracker into the
+// project (db.ImportIssues). With ?dry_run=1 it reports and writes nothing.
+// A real import sends one project.updated, so open boards reload once.
+func (s *Server) handleImportIssues(w http.ResponseWriter, r *http.Request) {
+	var batch db.ImportBatch
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxImportBody)).Decode(&batch); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeErr(w, fmt.Errorf("%w: the import batch is larger than %d MB; send fewer issues at a time", db.ErrValidation, maxImportBody>>20))
+			return
+		}
+		writeErr(w, fmt.Errorf("%w: invalid JSON body", db.ErrValidation))
+		return
+	}
+	dry := r.URL.Query().Get("dry_run")
+	dryRun := dry == "1" || dry == "true"
+	res, err := s.storeFor(r).ImportIssues(currentUser(r).ID, r.PathValue("ref"), &batch, dryRun)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if !dryRun && res.Created+res.Comments+res.Links > 0 {
+		if p, err := s.store.GetProject(r.PathValue("ref")); err == nil {
+			s.hub.Broadcast("project.updated", p.ID, p)
+		}
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // handleSearch runs q in the issue query syntax (db.ParseIssueQuery).
