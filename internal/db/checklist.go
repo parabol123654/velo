@@ -95,7 +95,12 @@ func SetChecklistItem(description, text string, index int, checked bool) (string
 // CheckItem sets one checklist item of an issue's description and records a
 // short activity ("checked: write tests") instead of the whole description.
 func (s *Store) CheckItem(actorID, ref, text string, index int, checked bool) (*Issue, error) {
-	iss, err := s.GetIssue(ref)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	iss, err := issueInTx(tx, ref) // read inside tx so a concurrent edit is not overwritten
 	if err != nil {
 		return nil, err
 	}
@@ -103,28 +108,22 @@ func (s *Store) CheckItem(actorID, ref, text string, index int, checked bool) (*
 	if err != nil {
 		return nil, err
 	}
-	if desc == iss.Description {
-		return iss, nil // already in that state
-	}
-	verb := "unchecked"
-	if checked {
-		verb = "checked"
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	now := nowUTC()
-	if _, err := tx.Exec(`UPDATE issues SET description = ?, updated_at = ? WHERE id = ?`, desc, now, iss.ID); err != nil {
-		return nil, err
-	}
-	if _, err := tx.Exec(
-		`INSERT INTO activities (id, issue_id, actor_id, action, field, old_value, new_value, via, created_at)
-		 VALUES (?, ?, ?, 'updated', 'checklist', '', ?, ?, ?)`,
-		newID(), iss.ID, actorID, verb+": "+item, s.via, now,
-	); err != nil {
-		return nil, err
+	if desc != iss.Description { // otherwise already in that state
+		verb := "unchecked"
+		if checked {
+			verb = "checked"
+		}
+		now := nowUTC()
+		if _, err := tx.Exec(`UPDATE issues SET description = ?, updated_at = ? WHERE id = ?`, desc, now, iss.ID); err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO activities (id, issue_id, actor_id, action, field, old_value, new_value, via, created_at)
+			 VALUES (?, ?, ?, 'updated', 'checklist', '', ?, ?, ?)`,
+			newID(), iss.ID, actorID, verb+": "+item, s.via, now,
+		); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err

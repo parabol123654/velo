@@ -409,17 +409,43 @@ func (s *Store) SearchIssues(query string, limit int, projectIDs []string) ([]Is
 }
 
 func (s *Store) UpdateIssue(actorID, ref string, patch UpdateIssueInput) (*Issue, error) {
-	cur, err := s.GetIssue(ref)
-	if err != nil {
-		return nil, err
-	}
-
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
+	cur, err := issueInTx(tx, ref)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.applyIssuePatch(tx, actorID, cur, patch); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.GetIssue(cur.ID)
+}
 
+// issueInTx reads an issue through tx, so a change is based on the row as it
+// is inside the transaction. (The pool has one connection: reading through
+// s.db while tx is open would block.) Labels, sub-issues and links are not loaded.
+func issueInTx(tx *sql.Tx, ref string) (*Issue, error) {
+	ref = strings.TrimSpace(ref)
+	it, err := scanIssue(tx.QueryRow(baseIssueSelect+` WHERE i.id = ? OR i.identifier = ? COLLATE NOCASE`, ref, ref))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &it, nil
+}
+
+// applyIssuePatch writes patch onto cur (read through the same tx) and logs
+// an activity per changed field.
+func (s *Store) applyIssuePatch(tx *sql.Tx, actorID string, cur *Issue, patch UpdateIssueInput) error {
+	var err error
 	now := nowUTC()
 	logActivity := func(field, oldVal, newVal string) error {
 		if oldVal == newVal {
@@ -437,10 +463,10 @@ func (s *Store) UpdateIssue(actorID, ref string, patch UpdateIssueInput) (*Issue
 	if patch.Title != nil {
 		t := strings.TrimSpace(*patch.Title)
 		if t == "" {
-			return nil, fmt.Errorf("%w: title cannot be empty", ErrValidation)
+			return fmt.Errorf("%w: title cannot be empty", ErrValidation)
 		}
 		if err := logActivity("title", cur.Title, t); err != nil {
-			return nil, err
+			return err
 		}
 		title = t
 	}
@@ -459,20 +485,20 @@ func (s *Store) UpdateIssue(actorID, ref string, patch UpdateIssueInput) (*Issue
 			cur.ProjectID, rawState, rawState,
 		).Scan(&stateID, &newStateName)
 		if err != nil {
-			return nil, fmt.Errorf("%w: state not found in project", ErrValidation)
+			return fmt.Errorf("%w: state not found in project", ErrValidation)
 		}
 		if err := logActivity("state", cur.StateName, newStateName); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
 	prio := cur.Priority
 	if patch.Priority != nil {
 		if *patch.Priority < 0 || *patch.Priority > 4 {
-			return nil, fmt.Errorf("%w: priority must be 0..4", ErrValidation)
+			return fmt.Errorf("%w: priority must be 0..4", ErrValidation)
 		}
 		if err := logActivity("priority", priorityLabel(cur.Priority), priorityLabel(*patch.Priority)); err != nil {
-			return nil, err
+			return err
 		}
 		prio = *patch.Priority
 	}
@@ -481,10 +507,10 @@ func (s *Store) UpdateIssue(actorID, ref string, patch UpdateIssueInput) (*Issue
 	if patch.AssigneeID != nil {
 		var newName string
 		if assigneeID, newName, err = resolveAssignee(tx, actorID, *patch.AssigneeID); err != nil {
-			return nil, err
+			return err
 		}
 		if err := logActivity("assignee", cur.AssigneeName, newName); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
@@ -492,10 +518,10 @@ func (s *Store) UpdateIssue(actorID, ref string, patch UpdateIssueInput) (*Issue
 	if patch.CycleID != nil {
 		var newCycleName string
 		if cycleID, newCycleName, err = resolveCycle(tx, cur.ProjectID, *patch.CycleID); err != nil {
-			return nil, err
+			return err
 		}
 		if err := logActivity("cycle", cur.CycleName, newCycleName); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
@@ -508,10 +534,10 @@ func (s *Store) UpdateIssue(actorID, ref string, patch UpdateIssueInput) (*Issue
 			var resolvedParent string
 			var parentProj string
 			if err := tx.QueryRow(`SELECT id, project_id FROM issues WHERE id = ? OR identifier = ? COLLATE NOCASE`, rawParent, rawParent).Scan(&resolvedParent, &parentProj); err != nil {
-				return nil, fmt.Errorf("%w: parent issue not found", ErrValidation)
+				return fmt.Errorf("%w: parent issue not found", ErrValidation)
 			}
 			if resolvedParent == cur.ID || parentProj != cur.ProjectID {
-				return nil, fmt.Errorf("%w: invalid parent issue", ErrValidation)
+				return fmt.Errorf("%w: invalid parent issue", ErrValidation)
 			}
 			parentID = resolvedParent
 		}
@@ -531,12 +557,12 @@ func (s *Store) UpdateIssue(actorID, ref string, patch UpdateIssueInput) (*Issue
 		WHERE id = ?
 	`, title, desc, stateID, prio, nullStr(assigneeID), nullStr(cycleID), nullStr(parentID), pos, now, cur.ID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if patch.LabelIDs != nil {
 		if _, err := tx.Exec(`DELETE FROM issue_labels WHERE issue_id = ?`, cur.ID); err != nil {
-			return nil, err
+			return err
 		}
 		for _, lid := range *patch.LabelIDs {
 			var resolvedID string
@@ -549,10 +575,7 @@ func (s *Store) UpdateIssue(actorID, ref string, patch UpdateIssueInput) (*Issue
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return s.GetIssue(cur.ID)
+	return nil
 }
 
 func (s *Store) DeleteIssue(ref string) error {
