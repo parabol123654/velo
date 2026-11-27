@@ -54,19 +54,6 @@ func (s *Store) CreateProject(key, name, description string) (*Project, error) {
 		return nil, err
 	}
 
-	defaultStates := []struct {
-		name     string
-		category string
-		color    string
-		pos      float64
-	}{
-		{"Backlog", "backlog", "#94a3b8", 1000},
-		{"Todo", "unstarted", "#64748b", 2000},
-		{"In Progress", "started", "#f59e0b", 3000},
-		{"In Review", "started", "#8b5cf6", 4000},
-		{"Done", "completed", "#10b981", 5000},
-		{"Canceled", "canceled", "#ef4444", 6000},
-	}
 	for _, st := range defaultStates {
 		if _, err := tx.Exec(
 			`INSERT INTO workflow_states (id, project_id, name, category, color, position) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -444,6 +431,20 @@ func (s *Store) DeleteCycle(id string) error {
 }
 
 // defaultLabels are created with every new project.
+var defaultStates = []struct {
+	name     string
+	category string
+	color    string
+	pos      float64
+}{
+	{"Backlog", "backlog", "#94a3b8", 1000},
+	{"Todo", "unstarted", "#64748b", 2000},
+	{"In Progress", "started", "#f59e0b", 3000},
+	{"In Review", "started", "#8b5cf6", 4000},
+	{"Done", "completed", "#10b981", 5000},
+	{"Canceled", "canceled", "#ef4444", 6000},
+}
+
 var defaultLabels = []struct {
 	name  string
 	color string

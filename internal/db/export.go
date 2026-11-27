@@ -146,6 +146,33 @@ func (s *Store) ImportProjectJSON(actorID string, b *ExportBundle) (*Project, er
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("%w: issues use labels the bundle does not define: %s", ErrValidation, strings.Join(missing, ", "))
 	}
+	// States likewise: a new project has the default states; the bundle's own
+	// are created after it. Names match ignoring case, Unicode included.
+	stateKnown := map[string]bool{}
+	for _, st := range defaultStates {
+		stateKnown[strings.ToLower(st.name)] = true
+	}
+	var newStates []WorkflowState
+	for _, st := range b.States {
+		name := strings.TrimSpace(st.Name)
+		switch {
+		case name == "":
+			return nil, fmt.Errorf("%w: the bundle has a state with no name", ErrValidation)
+		case !validStateCategories[st.Category]:
+			return nil, fmt.Errorf("%w: state %q has an unknown category %q", ErrValidation, name, st.Category)
+		case !stateKnown[strings.ToLower(name)]:
+			stateKnown[strings.ToLower(name)] = true
+			newStates = append(newStates, st)
+		}
+	}
+	for _, ei := range b.Issues {
+		if name := strings.TrimSpace(ei.StateName); name != "" && !stateKnown[strings.ToLower(name)] {
+			missing = append(missing, ei.Identifier+": "+strconv.Quote(ei.StateName))
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("%w: issues use states the bundle does not define: %s", ErrValidation, strings.Join(missing, ", "))
+	}
 	inBundle := map[string]bool{}
 	for _, ei := range b.Issues {
 		inBundle[ei.Identifier] = true
@@ -187,6 +214,19 @@ func (s *Store) ImportProjectJSON(actorID string, b *ExportBundle) (*Project, er
 		return nil, err
 	}
 
+	for _, st := range newStates {
+		if _, err := s.CreateWorkflowState(proj.ID, strings.TrimSpace(st.Name), st.Category, st.Color, st.Position); err != nil {
+			return nil, err
+		}
+	}
+	states, err := s.ListWorkflowStates(proj.ID)
+	if err != nil {
+		return nil, err
+	}
+	stateByName := map[string]string{} // lower-cased name -> ID; CreateIssue's own match is ASCII-only
+	for _, st := range states {
+		stateByName[strings.ToLower(st.Name)] = st.ID
+	}
 	for _, l := range b.Labels {
 		_, _ = s.CreateLabel(proj.ID, l.Name, l.Color)
 	}
@@ -204,7 +244,7 @@ func (s *Store) ImportProjectJSON(actorID string, b *ExportBundle) (*Project, er
 			ProjectRef:  proj.ID,
 			Title:       ei.Title,
 			Description: ei.Description,
-			StateID:     ei.StateName,
+			StateID:     stateByName[strings.ToLower(strings.TrimSpace(ei.StateName))],
 			Priority:    ei.Priority,
 			CycleID:     cycleByName[strings.ToLower(ei.CycleName)],
 			LabelIDs:    ei.Labels,
