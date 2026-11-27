@@ -15,7 +15,7 @@ import (
 // into an import batch and sends it through the HTTP API (#16), so the CLI
 // never opens the database. Running it again skips what is already imported.
 
-const importUsage = `usage: velo import <file|github|jira|linear> ... --project KEY [--dry-run]
+const importUsage = `usage: velo import <source> ... --project KEY [--dry-run]
   velo import file BATCH.json --project KEY    a batch in the API's import format (see SPEC.md)`
 
 func runImport(args []string) error {
@@ -89,30 +89,51 @@ func (o *importCommon) send(b *db.ImportBatch) error {
 	return nil
 }
 
-// Limits for one request, under the server's 5000 issues and 32 MB.
+// Limits for one request, just under the server's (db.ImportIssues and the
+// 32 MB body limit). A batch within them goes in one request, so its dry run
+// reports exactly what the import will do.
 const (
-	importPartIssues = 1000
-	importPartBytes  = 24 << 20
+	importPartIssues   = 5000
+	importPartComments = 20000
+	importPartLinks    = 10000
+	importPartBytes    = 30 << 20
 )
 
 // sendImport posts the batch, split into parts the server accepts when it is
-// big. Parents go before their children and links go with the last part, so
-// every reference is to an issue the server already has. A dry run cannot see
-// what earlier parts would create, so it leaves out references across parts.
+// bigger than one request. Parents go before their children and links follow
+// the issues, so every reference is to an issue the server already has.
 func sendImport(c *client.Client, project string, b *db.ImportBatch, dryRun bool) (*db.ImportResult, error) {
+	// The server refuses a repeated ID within a request; across requests the
+	// second copy would look already imported and vanish, so check here.
+	seen := map[string]bool{}
+	for _, it := range b.Issues {
+		id := strings.TrimSpace(it.ExternalID)
+		if seen[id] {
+			return nil, fmt.Errorf("issue %s appears twice in the import", id)
+		}
+		seen[id] = true
+	}
 	parts, err := splitImport(b)
 	if err != nil {
 		return nil, err
 	}
+	if dryRun && len(parts) > 1 {
+		fmt.Fprintf(os.Stderr, "The import needs %d requests; the dry run checks each alone, so parents and links between them are checked when you import.\n", len(parts))
+	}
+	all := map[string]bool{}
+	for _, it := range b.Issues {
+		all[strings.TrimSpace(it.ExternalID)] = true
+	}
 	total := &db.ImportResult{DryRun: dryRun}
+	seenLabel, seenCycle := map[string]bool{}, map[string]bool{}
 	for i, part := range parts {
 		if dryRun && len(parts) > 1 {
-			part = withinPart(part)
+			part = withinPart(part, all)
 		}
 		res, err := c.ImportIssues(project, part, dryRun)
 		if err != nil {
-			if len(parts) > 1 {
-				return nil, fmt.Errorf("part %d of %d (earlier parts are imported; run again to continue): %w", i+1, len(parts), err)
+			if len(parts) > 1 && i > 0 && !dryRun {
+				return nil, fmt.Errorf("request %d of %d failed (the first %d are imported; run again to continue): %w", i+1, len(parts), i, err)
 			}
 			return nil, err
 		}
@@ -120,52 +141,79 @@ func sendImport(c *client.Client, project string, b *db.ImportBatch, dryRun bool
 		total.Skipped += res.Skipped
 		total.Comments += res.Comments
 		total.Links += res.Links
-		total.LabelsCreated = append(total.LabelsCreated, res.LabelsCreated...)
-		total.CyclesCreated = append(total.CyclesCreated, res.CyclesCreated...)
+		for _, l := range res.LabelsCreated {
+			if !seenLabel[l] {
+				seenLabel[l] = true
+				total.LabelsCreated = append(total.LabelsCreated, l)
+			}
+		}
+		for _, c := range res.CyclesCreated {
+			if !seenCycle[c] {
+				seenCycle[c] = true
+				total.CyclesCreated = append(total.CyclesCreated, c)
+			}
+		}
 		total.Unassigned = append(total.Unassigned, res.Unassigned...)
 		total.Issues = append(total.Issues, res.Issues...)
 	}
 	return total, nil
 }
 
+// splitImport cuts the batch into requests under the limits: issues (with
+// their comments) first, parents before children, then the links.
 func splitImport(b *db.ImportBatch) ([]*db.ImportBatch, error) {
-	issues := parentsFirst(b.Issues)
 	var parts []*db.ImportBatch
 	cur := &db.ImportBatch{Source: b.Source, Cycles: b.Cycles}
-	size := 0
-	for _, it := range issues {
+	size, comments := 0, 0
+	for _, it := range parentsFirst(b.Issues) {
 		raw, err := json.Marshal(it)
 		if err != nil {
 			return nil, err
 		}
-		if len(cur.Issues) > 0 && (len(cur.Issues) >= importPartIssues || size+len(raw) > importPartBytes) {
+		if len(cur.Issues) > 0 && (len(cur.Issues) >= importPartIssues || size+len(raw) > importPartBytes || comments+len(it.Comments) > importPartComments) {
 			parts = append(parts, cur)
 			cur = &db.ImportBatch{Source: b.Source, Cycles: b.Cycles}
-			size = 0
+			size, comments = 0, 0
 		}
 		cur.Issues = append(cur.Issues, it)
 		size += len(raw)
+		comments += len(it.Comments)
 	}
-	cur.Links = b.Links
-	return append(parts, cur), nil
+	parts = append(parts, cur)
+	// Links ride with the last part while they fit, then fill more requests,
+	// which repeat the last part's issues (already imported, so skipped).
+	links := b.Links
+	last := parts[len(parts)-1]
+	for len(links) > 0 {
+		n := min(len(links), importPartLinks)
+		if last.Links != nil {
+			last = &db.ImportBatch{Source: b.Source, Issues: last.Issues[:1]}
+			parts = append(parts, last)
+		}
+		last.Links = links[:n]
+		links = links[n:]
+	}
+	return parts, nil
 }
 
 // parentsFirst orders issues so a parent in the batch comes before its
-// children, keeping the original order otherwise.
+// children, keeping the original order otherwise. IDs match as the server
+// matches them, trimmed.
 func parentsFirst(issues []db.ImportIssue) []db.ImportIssue {
 	byID := map[string]db.ImportIssue{}
 	for _, it := range issues {
-		byID[it.ExternalID] = it
+		byID[strings.TrimSpace(it.ExternalID)] = it
 	}
 	done := map[string]bool{}
 	out := make([]db.ImportIssue, 0, len(issues))
 	var visit func(it db.ImportIssue, depth int)
 	visit = func(it db.ImportIssue, depth int) {
-		if done[it.ExternalID] {
+		id := strings.TrimSpace(it.ExternalID)
+		if done[id] {
 			return
 		}
-		done[it.ExternalID] = true
-		if p, ok := byID[it.Parent]; ok && depth < len(issues) {
+		done[id] = true
+		if p, ok := byID[strings.TrimSpace(it.Parent)]; ok && depth < len(issues) {
 			visit(p, depth+1)
 		}
 		out = append(out, it)
@@ -176,23 +224,26 @@ func parentsFirst(issues []db.ImportIssue) []db.ImportIssue {
 	return out
 }
 
-// withinPart drops parents and links that name issues outside the part.
-func withinPart(b *db.ImportBatch) *db.ImportBatch {
+// withinPart drops, for a dry run, parents and links that name issues of the
+// batch sent in another request. References to IDs outside the batch stay, so
+// the server still checks them against earlier imports.
+func withinPart(b *db.ImportBatch, all map[string]bool) *db.ImportBatch {
 	in := map[string]bool{}
 	for _, it := range b.Issues {
-		in[it.ExternalID] = true
+		in[strings.TrimSpace(it.ExternalID)] = true
 	}
+	elsewhere := func(id string) bool { id = strings.TrimSpace(id); return all[id] && !in[id] }
 	out := *b
 	out.Issues = make([]db.ImportIssue, len(b.Issues))
 	for i, it := range b.Issues {
-		if !in[it.Parent] {
+		if elsewhere(it.Parent) {
 			it.Parent = ""
 		}
 		out.Issues[i] = it
 	}
 	out.Links = nil
 	for _, l := range b.Links {
-		if in[l.Source] && in[l.Target] {
+		if !elsewhere(l.Source) && !elsewhere(l.Target) {
 			out.Links = append(out.Links, l)
 		}
 	}

@@ -88,8 +88,13 @@ type ImportedIssue struct {
 
 const (
 	maxImportIssues   = 5000
+	maxImportComments = 20000
+	maxImportLinks    = 10000
 	maxImportKeyChars = 200 // source and external IDs
 )
+
+// commentRefPrefix keeps comment refs apart from issue refs in import_refs.
+const commentRefPrefix = "comment:"
 
 // ImportIssues imports a batch into a project, or with dryRun reports what it
 // would do and writes nothing. Any problem fails the whole batch.
@@ -107,7 +112,9 @@ func (s *Store) ImportIssues(actorID, projectRef string, b *ImportBatch, dryRun 
 	}
 	defer tx.Rollback()
 
-	im := &importer{s: s, tx: tx, actorID: actorID, proj: proj, source: strings.TrimSpace(b.Source), res: &ImportResult{DryRun: dryRun}}
+	im := &importer{s: s, tx: tx, actorID: actorID, proj: proj, source: strings.TrimSpace(b.Source), res: &ImportResult{
+		DryRun: dryRun, LabelsCreated: []string{}, CyclesCreated: []string{}, Unassigned: []string{}, Issues: []ImportedIssue{},
+	}}
 	if err := im.run(b); err != nil {
 		return nil, err
 	}
@@ -136,6 +143,9 @@ func checkImportBatch(b *ImportBatch) error {
 	if len(b.Issues) > maxImportIssues {
 		return bad("the batch has %d issues; send at most %d at a time", len(b.Issues), maxImportIssues)
 	}
+	if len(b.Links) > maxImportLinks {
+		return bad("the batch has %d links; send at most %d at a time", len(b.Links), maxImportLinks)
+	}
 	issues := map[string]bool{}
 	comments := map[string]bool{}
 	for i, it := range b.Issues {
@@ -147,6 +157,8 @@ func checkImportBatch(b *ImportBatch) error {
 			return bad("issue %d: external_id is longer than %d characters", i+1, maxImportKeyChars)
 		case issues[id]:
 			return bad("external_id %s appears twice", id)
+		case strings.HasPrefix(id, commentRefPrefix):
+			return bad("issue %d: external_id may not start with %q", i+1, commentRefPrefix)
 		case strings.TrimSpace(it.Title) == "":
 			return bad("%s: title is required", id)
 		case it.Priority < 0 || it.Priority > 4:
@@ -175,6 +187,9 @@ func checkImportBatch(b *ImportBatch) error {
 			comments[cid] = true
 		}
 	}
+	if len(comments) > maxImportComments {
+		return bad("the batch has %d comments; send at most %d at a time", len(comments), maxImportComments)
+	}
 	for _, c := range b.Cycles {
 		if strings.TrimSpace(c.Name) == "" {
 			return bad("a cycle has no name")
@@ -202,11 +217,13 @@ type importer struct {
 	source  string
 	res     *ImportResult
 
-	issues   map[string]*Issue // external ID -> issue (ID and identifier), new or from an earlier run
-	labels   map[string]string // lower-cased name -> label ID
-	cycles   map[string]string // lower-cased name -> cycle ID
-	states   map[string]string // lower-cased name -> state ID
-	category map[string]string // category -> first state ID
+	issues     map[string]*Issue   // external ID -> issue (ID and identifier), new or from an earlier run
+	labels     map[string]string   // foldKey(name) -> label ID
+	cycles     map[string]string   // foldKey(name) -> cycle ID
+	states     map[string]string   // foldKey(name) -> state ID
+	category   map[string]string   // category -> first state ID by position
+	firstState string              // first state by position, CreateIssue's last resort
+	blocks     map[string][]string // the project's blocks links, source ID -> target IDs
 }
 
 func (im *importer) run(b *ImportBatch) error {
@@ -216,7 +233,7 @@ func (im *importer) run(b *ImportBatch) error {
 	var created []ImportIssue
 	for _, it := range b.Issues {
 		id := strings.TrimSpace(it.ExternalID)
-		issueID, err := im.ref(id)
+		issueID, err := im.issueRef(id)
 		if err != nil {
 			return err
 		}
@@ -261,6 +278,7 @@ func (im *importer) load() error {
 	im.cycles = map[string]string{}
 	im.states = map[string]string{}
 	im.category = map[string]string{}
+	im.blocks = map[string][]string{}
 	rows, err := im.tx.Query(`SELECT id, name, category FROM workflow_states WHERE project_id = ? ORDER BY position ASC`, im.proj.ID)
 	if err != nil {
 		return err
@@ -276,6 +294,9 @@ func (im *importer) load() error {
 		}
 		if _, ok := im.category[cat]; !ok {
 			im.category[cat] = id
+		}
+		if im.firstState == "" {
+			im.firstState = id
 		}
 	}
 	rows.Close()
@@ -300,14 +321,38 @@ func (im *importer) load() error {
 			return err
 		}
 	}
-	return nil
+	// Loop checks walk this map instead of querying per step: a batch can
+	// add thousands of links while it holds the only database connection.
+	rows, err = im.tx.Query(`SELECT l.source_id, l.target_id FROM issue_links l JOIN issues i ON i.id = l.source_id
+		WHERE l.kind = 'blocks' AND i.project_id = ?`, im.proj.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var src, dst string
+		if err := rows.Scan(&src, &dst); err != nil {
+			return err
+		}
+		im.blocks[src] = append(im.blocks[src], dst)
+	}
+	return rows.Err()
 }
 
-// ref returns the issue or comment an earlier run made from an external ID.
-func (im *importer) ref(externalID string) (string, error) {
+// issueRef returns the issue an earlier run made from an external ID.
+func (im *importer) issueRef(externalID string) (string, error) {
+	return im.ref("issue_id", externalID)
+}
+
+// commentRef returns the comment an earlier run made from a comment's external ID.
+func (im *importer) commentRef(externalID string) (string, error) {
+	return im.ref("comment_id", commentRefPrefix+externalID)
+}
+
+func (im *importer) ref(column, key string) (string, error) {
 	var id string
-	err := im.tx.QueryRow(`SELECT COALESCE(issue_id, comment_id) FROM import_refs WHERE project_id = ? AND source = ? AND external_id = ?`,
-		im.proj.ID, im.source, externalID).Scan(&id)
+	err := im.tx.QueryRow(`SELECT `+column+` FROM import_refs WHERE project_id = ? AND source = ? AND external_id = ? AND `+column+` IS NOT NULL`,
+		im.proj.ID, im.source, key).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -335,12 +380,8 @@ func (im *importer) state(it ImportIssue) (string, error) {
 	if id, ok := im.category[cat]; ok {
 		return id, nil
 	}
-	if it.StateCategory == "" { // no unstarted state: take the first one, as CreateIssue does
-		for _, c := range []string{"backlog", "started", "completed", "canceled"} {
-			if id, ok := im.category[c]; ok {
-				return id, nil
-			}
-		}
+	if it.StateCategory == "" && im.firstState != "" { // no unstarted state: the first one, as CreateIssue does
+		return im.firstState, nil
 	}
 	return "", fmt.Errorf("%w: %s: %s has no %s state", ErrValidation, it.ExternalID, im.proj.Key, cat)
 }
@@ -406,9 +447,15 @@ func (im *importer) createIssue(b *ImportBatch, it ImportIssue) (*Issue, error) 
 		}
 	}
 	var assigneeID, unassigned string
-	if a := strings.TrimSpace(it.Assignee); a != "" && !strings.EqualFold(a, "me") {
-		if assigneeID, _, err = resolveAssignee(im.tx, im.actorID, a); err != nil {
-			assigneeID, unassigned = "", a
+	if a := strings.TrimSpace(it.Assignee); a != "" {
+		if !strings.EqualFold(a, "me") { // "me" would be the importer, not whoever the source meant
+			assigneeID, _, err = resolveAssignee(im.tx, im.actorID, a)
+			if err != nil && !errors.Is(err, ErrValidation) {
+				return nil, err
+			}
+		}
+		if assigneeID == "" {
+			unassigned = a
 			im.res.Unassigned = append(im.res.Unassigned, id+": "+a)
 		}
 	}
@@ -449,25 +496,41 @@ func (im *importer) createIssue(b *ImportBatch, it ImportIssue) (*Issue, error) 
 }
 
 // importDescription appends a footer naming the original, who opened it and,
-// when no Velo user matched, who it was assigned to.
+// when no Velo user matched, who it was assigned to. The footer is a quote
+// line, which the web UI's Markdown renders; names from the other tracker are
+// made plain so they cannot form links.
 func importDescription(it ImportIssue, unassigned string) string {
-	origin := strings.TrimSpace(it.ExternalID)
-	if u := strings.TrimSpace(it.URL); u != "" {
+	origin := plainName(strings.TrimSpace(it.ExternalID))
+	if u := strings.TrimSpace(it.URL); (strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://")) && !strings.ContainsAny(u, "() \t\n") {
 		origin = "[" + origin + "](" + u + ")"
 	}
-	footer := "Imported from " + origin
+	footer := "> Imported from " + origin
 	if a := strings.TrimSpace(it.Author); a != "" {
-		footer += ", opened by " + a
+		footer += ", opened by " + plainName(a)
 	}
 	if unassigned != "" {
-		footer += "; assigned to " + unassigned
+		footer += "; assigned to " + plainName(unassigned)
 	}
 	desc := strings.TrimSpace(it.Description)
+	fences := 0
+	for _, line := range strings.Split(desc, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fences++
+		}
+	}
+	if fences%2 == 1 { // close a fence the source left open, or it swallows the footer
+		desc += "\n```"
+	}
 	if desc != "" {
 		desc += "\n\n"
 	}
-	return desc + "---\n_" + footer + "_"
+	return desc + footer
 }
+
+var plainNamer = strings.NewReplacer("[", "(", "]", ")", "*", "", "`", "'", "\n", " ")
+
+// plainName keeps a name from another tracker from turning into Markdown.
+func plainName(s string) string { return plainNamer.Replace(s) }
 
 // setParents links new issues to their parents, which may be in this batch or
 // from an earlier run. Issues from an earlier run keep their parent.
@@ -476,19 +539,12 @@ func (im *importer) setParents(created []ImportIssue) error {
 	for _, it := range created {
 		if p := strings.TrimSpace(it.Parent); p != "" {
 			id := strings.TrimSpace(it.ExternalID)
-			if im.issues[p] == nil {
-				ref, err := im.ref(p)
-				if err != nil {
-					return err
-				}
-				if ref == "" {
-					return fmt.Errorf("%w: %s: parent %s is not in this import", ErrValidation, id, p)
-				}
-				ident, err := im.identifier(ref)
-				if err != nil {
-					return err
-				}
-				im.issues[p] = &Issue{ID: ref, Identifier: ident}
+			iss, err := im.known(p)
+			if err != nil {
+				return err
+			}
+			if iss == nil {
+				return fmt.Errorf("%w: %s: parent %s is not in this import", ErrValidation, id, p)
 			}
 			parent[id] = p
 		}
@@ -510,13 +566,31 @@ func (im *importer) setParents(created []ImportIssue) error {
 	return nil
 }
 
+// known returns an issue of this batch or of an earlier run by external ID,
+// or nil.
+func (im *importer) known(ext string) (*Issue, error) {
+	if iss := im.issues[ext]; iss != nil {
+		return iss, nil
+	}
+	ref, err := im.issueRef(ext)
+	if err != nil || ref == "" {
+		return nil, err
+	}
+	ident, err := im.identifier(ref)
+	if err != nil {
+		return nil, err
+	}
+	im.issues[ext] = &Issue{ID: ref, Identifier: ident}
+	return im.issues[ext], nil
+}
+
 // addComments adds the comments an earlier run has not, with a first line
 // naming the original author and date.
 func (im *importer) addComments(it ImportIssue) error {
 	iss := im.issues[strings.TrimSpace(it.ExternalID)]
 	for _, c := range it.Comments {
-		key := "comment:" + strings.TrimSpace(c.ExternalID)
-		if ref, err := im.ref(key); err != nil {
+		cext := strings.TrimSpace(c.ExternalID)
+		if ref, err := im.commentRef(cext); err != nil {
 			return err
 		} else if ref != "" {
 			continue
@@ -528,7 +602,11 @@ func (im *importer) addComments(it ImportIssue) error {
 		}
 		body := strings.TrimSpace(c.Body)
 		if a := strings.TrimSpace(c.Author); a != "" {
-			body = "_" + a + ", " + created.Format("2006-01-02") + ":_\n\n" + body
+			header := "**" + plainName(a) + "**"
+			if !c.CreatedAt.IsZero() { // the date where it was written, not in UTC
+				header += " · " + c.CreatedAt.Format("2006-01-02")
+			}
+			body = header + "\n\n" + body
 		}
 		cid := newID()
 		if _, err := im.tx.Exec(`INSERT INTO comments (id, issue_id, author_id, body, via, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -536,7 +614,7 @@ func (im *importer) addComments(it ImportIssue) error {
 			return err
 		}
 		if _, err := im.tx.Exec(`INSERT INTO import_refs (project_id, source, external_id, comment_id, created_at) VALUES (?, ?, ?, ?, ?)`,
-			im.proj.ID, im.source, key, cid, now); err != nil {
+			im.proj.ID, im.source, commentRefPrefix+cext, cid, now); err != nil {
 			return err
 		}
 		im.res.Comments++
@@ -544,26 +622,21 @@ func (im *importer) addComments(it ImportIssue) error {
 	return nil
 }
 
-// link adds a link between two imported issues unless it exists already.
+// link adds a link between two imported issues unless that very link
+// exists. A blocks or duplicates link the other way round is refused, as
+// LinkIssues refuses it: the import must not report success without it.
 func (im *importer) link(l ImportLink) error {
 	name := l.Source + " " + l.Kind + " " + l.Target
 	ends := [2]*Issue{}
 	for i, ext := range []string{strings.TrimSpace(l.Source), strings.TrimSpace(l.Target)} {
-		if ends[i] = im.issues[ext]; ends[i] == nil {
-			ref, err := im.ref(ext)
-			if err != nil {
-				return err
-			}
-			if ref == "" {
-				return fmt.Errorf("%w: link %s: %s is not in this import", ErrValidation, name, ext)
-			}
-			ident, err := im.identifier(ref)
-			if err != nil {
-				return err
-			}
-			ends[i] = &Issue{ID: ref, Identifier: ident}
-			im.issues[ext] = ends[i]
+		iss, err := im.known(ext)
+		if err != nil {
+			return err
 		}
+		if iss == nil {
+			return fmt.Errorf("%w: link %s: %s is not in this import", ErrValidation, name, ext)
+		}
+		ends[i] = iss
 	}
 	kind := strings.ToLower(strings.TrimSpace(l.Kind))
 	k := linkKinds[kind]
@@ -571,22 +644,28 @@ func (im *importer) link(l ImportLink) error {
 	if k.swap {
 		src, dst = dst, src
 	}
-	var n int
-	if err := im.tx.QueryRow(`SELECT COUNT(*) FROM issue_links WHERE kind = ? AND ((source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?))`,
-		k.stored, src.ID, dst.ID, dst.ID, src.ID).Scan(&n); err != nil {
+	var same, reverse int
+	if err := im.tx.QueryRow(`SELECT
+		COUNT(CASE WHEN source_id = ? AND target_id = ? THEN 1 END),
+		COUNT(CASE WHEN source_id = ? AND target_id = ? THEN 1 END)
+		FROM issue_links WHERE kind = ? AND source_id IN (?, ?) AND target_id IN (?, ?)`,
+		src.ID, dst.ID, dst.ID, src.ID, k.stored, src.ID, dst.ID, src.ID, dst.ID).Scan(&same, &reverse); err != nil {
 		return err
 	}
-	if n > 0 {
-		return nil
-	}
-	if k.stored == "blocks" {
-		chain, err := blockChain(im.tx, dst.ID, src.ID)
-		if err != nil {
-			return err
+	switch {
+	case same > 0 || (k.stored == "relates" && reverse > 0):
+		return nil // made by an earlier run, or listed twice
+	case k.stored == "duplicates" && reverse > 0:
+		return fmt.Errorf("%w: link %s: %s already duplicates %s", ErrValidation, name, dst.Identifier, src.Identifier)
+	case k.stored == "blocks":
+		if chain := im.blockPath(dst.ID, src.ID); chain != nil {
+			idents, err := im.identifiers(chain)
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("%w: link %s would make a blocking loop: %s → %s", ErrValidation, name, strings.Join(idents, " → "), dst.Identifier)
 		}
-		if chain != nil {
-			return fmt.Errorf("%w: link %s would make a blocking loop: %s → %s", ErrValidation, name, strings.Join(chain, " → "), dst.Identifier)
-		}
+		im.blocks[src.ID] = append(im.blocks[src.ID], dst.ID)
 	}
 	if _, err := im.tx.Exec(`INSERT INTO issue_links (id, source_id, target_id, kind, created_at) VALUES (?, ?, ?, ?, ?)`,
 		newID(), src.ID, dst.ID, k.stored, nowUTC()); err != nil {
@@ -597,6 +676,42 @@ func (im *importer) link(l ImportLink) error {
 	}
 	im.res.Links++
 	return nil
+}
+
+// blockPath returns the issue IDs along a chain of blocks links from "from"
+// to "to", or nil, walking the in-memory graph.
+func (im *importer) blockPath(from, to string) []string {
+	prev := map[string]string{from: ""}
+	queue := []string{from}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if cur == to {
+			var chain []string
+			for id := cur; id != ""; id = prev[id] {
+				chain = append([]string{id}, chain...)
+			}
+			return chain
+		}
+		for _, next := range im.blocks[cur] {
+			if _, seen := prev[next]; !seen {
+				prev[next] = cur
+				queue = append(queue, next)
+			}
+		}
+	}
+	return nil
+}
+
+func (im *importer) identifiers(ids []string) ([]string, error) {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		var err error
+		if out[i], err = im.identifier(id); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // Summary is the one-line CLI summary of a result.

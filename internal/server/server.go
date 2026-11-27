@@ -819,7 +819,12 @@ const maxImportBody = 32 << 20
 // A real import sends one project.updated, so open boards reload once.
 func (s *Server) handleImportIssues(w http.ResponseWriter, r *http.Request) {
 	var batch db.ImportBatch
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxImportBody)).Decode(&batch); err != nil {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxImportBody))
+	err := dec.Decode(&batch)
+	if err == nil && dec.More() {
+		err = errors.New("data after the batch")
+	}
+	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
 			writeErr(w, fmt.Errorf("%w: the import batch is larger than %d MB; send fewer issues at a time", db.ErrValidation, maxImportBody>>20))
@@ -828,8 +833,14 @@ func (s *Server) handleImportIssues(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("%w: invalid JSON body", db.ErrValidation))
 		return
 	}
-	dry := r.URL.Query().Get("dry_run")
-	dryRun := dry == "1" || dry == "true"
+	dryRun := false
+	if v := r.URL.Query().Get("dry_run"); v != "" {
+		// An unrecognized value must not turn a dry run into a real import.
+		if dryRun, err = strconv.ParseBool(v); err != nil {
+			writeErr(w, fmt.Errorf("%w: dry_run must be 1 or 0, got %q", db.ErrValidation, v))
+			return
+		}
+	}
 	res, err := s.storeFor(r).ImportIssues(currentUser(r).ID, r.PathValue("ref"), &batch, dryRun)
 	if err != nil {
 		writeErr(w, err)

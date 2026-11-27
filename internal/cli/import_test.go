@@ -86,6 +86,7 @@ func TestImportFileCommand(t *testing.T) {
 		{[]string{bad, "--project", "DEV"}, `state "Nope" is not a state of DEV`},
 		{[]string{path, "--project", "NOPE"}, "404"},
 		{[]string{filepath.Join(t.TempDir(), "missing.json"), "--project", "DEV"}, "no such file"},
+		{[]string{writeBatch(t, &db.ImportBatch{Source: "file", Issues: []db.ImportIssue{{ExternalID: "D-1", Title: "a"}, {ExternalID: " D-1", Title: "b"}}}), "--project", "DEV"}, "D-1 appears twice"},
 	} {
 		if _, err := run(tc.args...); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Fatalf("%v: want error containing %q, got %v", tc.args, tc.want, err)
@@ -137,5 +138,34 @@ func TestImportSplitsBigBatches(t *testing.T) {
 	child, _ := st.GetIssue("DEV-2") // X-1 is sent second, after its parent
 	if child.Title != "Issue 1" || child.ParentIdentifier != "DEV-1" {
 		t.Fatalf("parent across the batch: %+v", child)
+	}
+}
+
+// More links than one request takes go in further requests, which repeat
+// one already-sent issue so the server has something to skip.
+func TestImportSplitsLinks(t *testing.T) {
+	st, url, tok := importServer(t)
+	b := &db.ImportBatch{Source: "file"}
+	for i := 0; i < 150; i++ {
+		b.Issues = append(b.Issues, db.ImportIssue{ExternalID: fmt.Sprint(i), Title: "t"})
+	}
+	for i := 0; i < 150 && len(b.Links) <= importPartLinks; i++ {
+		for j := i + 1; j < 150 && len(b.Links) <= importPartLinks; j++ {
+			b.Links = append(b.Links, db.ImportLink{Source: fmt.Sprint(i), Kind: "relates", Target: fmt.Sprint(j)})
+		}
+	}
+	parts, err := splitImport(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 2 || len(parts[0].Links) != importPartLinks || len(parts[1].Links) != 1 || len(parts[1].Issues) != 1 {
+		t.Fatalf("parts: %d, links %d", len(parts), len(parts[0].Links))
+	}
+	res, err := sendImport(newAPIClient(url, tok), "DEV", b, false)
+	if err != nil || res.Created != 150 || res.Links != importPartLinks+1 {
+		t.Fatalf("import: %+v %v", res, err)
+	}
+	if n, _ := st.ListIssues(db.IssueFilter{ProjectRef: "DEV"}); len(n) != 150 {
+		t.Fatalf("%d issues", len(n))
 	}
 }

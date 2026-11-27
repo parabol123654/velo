@@ -67,7 +67,7 @@ func TestImportEndpoint(t *testing.T) {
 	}
 
 	code, b = call(t, "POST", ts.URL+"/api/projects/DEV/import", tok, importBody)
-	if code != http.StatusOK || !strings.Contains(b, `"created":0`) || !strings.Contains(b, `"skipped":2`) {
+	if code != http.StatusOK || !strings.Contains(b, `"created":0`) || !strings.Contains(b, `"skipped":2`) || !strings.Contains(b, `"labels_created":[]`) {
 		t.Fatalf("rerun: %d %s", code, b)
 	}
 	for _, tc := range []struct {
@@ -77,6 +77,8 @@ func TestImportEndpoint(t *testing.T) {
 		{"/api/projects/DEV/import", `{"source":"github","issues":[{"external_id":"x","title":""}]}`, http.StatusBadRequest},
 		{"/api/projects/DEV/import", `not json`, http.StatusBadRequest},
 		{"/api/projects/NOPE/import", importBody, http.StatusNotFound},
+		{"/api/projects/DEV/import?dry_run=yes", importBody, http.StatusBadRequest},
+		{"/api/projects/DEV/import", importBody + `{"source":"x"}`, http.StatusBadRequest},
 	} {
 		if code, b := call(t, "POST", ts.URL+tc.path, admin, tc.body); code != tc.want {
 			t.Fatalf("%s %s: %d %s, want %d", tc.path, tc.body, code, b, tc.want)

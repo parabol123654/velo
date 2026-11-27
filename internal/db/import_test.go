@@ -76,7 +76,7 @@ func TestImportIssuesCreates(t *testing.T) {
 	if p.StateName != "Done" || p.CycleName != "v1.0" || len(p.Labels) != 2 || !p.CreatedAt.Equal(time.Date(2024, 3, 2, 10, 0, 0, 0, time.UTC)) {
 		t.Fatalf("DEV-1: %+v", p)
 	}
-	if !strings.Contains(p.Description, "Imported from [o/r#1](https://github.com/o/r/issues/1), opened by @alice") {
+	if !strings.Contains(p.Description, "> Imported from [o/r#1](https://github.com/o/r/issues/1), opened by @alice") {
 		t.Fatalf("DEV-1 footer: %q", p.Description)
 	}
 	c, _ := st.GetIssue("DEV-2")
@@ -233,5 +233,47 @@ func TestImportRefsFollowDeletes(t *testing.T) {
 	res, err := st.ImportIssues(admin.ID, "DEV", b, false)
 	if err != nil || res.Created != 1 || res.Issues[2].Identifier != "DEV-4" {
 		t.Fatalf("re-import after delete: %+v %v", res, err)
+	}
+}
+
+// Names from the other tracker cannot form Markdown links in the footer,
+// a URL that would break the link stays plain, and a code fence the source
+// left open is closed so the footer still shows.
+func TestImportFooterIsPlain(t *testing.T) {
+	st, admin, _ := importFixture(t)
+	b := &ImportBatch{Source: "s", Issues: []ImportIssue{
+		{ExternalID: "a](http://evil)", URL: "https://x.dev/a)b", Title: "t", Author: "**[me](http://evil)**", Description: "```go\nopen"},
+	}}
+	if _, err := st.ImportIssues(admin.ID, "DEV", b, false); err != nil {
+		t.Fatal(err)
+	}
+	iss, _ := st.GetIssue("DEV-1")
+	want := "```go\nopen\n```\n\n> Imported from a)(http://evil), opened by (me)(http://evil)"
+	if iss.Description != want {
+		t.Fatalf("description:\n%q\nwant\n%q", iss.Description, want)
+	}
+}
+
+// A duplicates link the other way round is refused like LinkIssues refuses
+// it, "me" is not the source's user, and too many links are a 400.
+func TestImportLinkAndAssigneeEdges(t *testing.T) {
+	st, admin, _ := importFixture(t)
+	b := &ImportBatch{Source: "s", Issues: []ImportIssue{
+		{ExternalID: "1", Title: "a", Assignee: "me"}, {ExternalID: "2", Title: "b"},
+	}, Links: []ImportLink{{Source: "1", Kind: "duplicates", Target: "2"}, {Source: "2", Kind: "duplicates", Target: "1"}}}
+	if _, err := st.ImportIssues(admin.ID, "DEV", b, false); !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), "already duplicates") {
+		t.Fatalf("reversed duplicates: %v", err)
+	}
+	b.Links = b.Links[:1]
+	res, err := st.ImportIssues(admin.ID, "DEV", b, false)
+	if err != nil || len(res.Unassigned) != 1 || res.Unassigned[0] != "1: me" {
+		t.Fatalf("assignee me: %+v %v", res, err)
+	}
+	if iss, _ := st.GetIssue("DEV-1"); iss.AssigneeID != "" {
+		t.Fatalf("me assigned the importer: %+v", iss)
+	}
+	b.Links = make([]ImportLink, maxImportLinks+1)
+	if _, err := st.ImportIssues(admin.ID, "DEV", b, false); !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), "links; send at most") {
+		t.Fatalf("too many links: %v", err)
 	}
 }
