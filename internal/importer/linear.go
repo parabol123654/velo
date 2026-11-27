@@ -37,7 +37,9 @@ func (l *LinearCSV) Batch(r io.Reader) (*db.ImportBatch, []string, error) {
 	unknownPriority := map[string]bool{}
 	teams := map[string]bool{}
 	for _, row := range t.rows {
-		teams[t.get(row, "Team")] = true
+		if team := t.get(row, "Team"); team != "" {
+			teams[team] = true
+		}
 	}
 	for n, row := range t.rows {
 		key := t.get(row, "ID")

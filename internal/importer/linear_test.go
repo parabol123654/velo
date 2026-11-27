@@ -81,3 +81,12 @@ func TestLinearReviewFindings(t *testing.T) {
 		}
 	}
 }
+
+// Rows without a Team do not make a one-team file look like several.
+func TestLinearOneTeamWithBlanks(t *testing.T) {
+	csv := "ID,Team,Title,Cycle Name\nENG-1,Engineering,a,Cycle 5\nENG-2,,b,Cycle 5\n"
+	b, _, err := (&LinearCSV{}).Batch(strings.NewReader(csv))
+	if err != nil || b.Issues[0].Cycle != "Cycle 5" || b.Issues[1].Cycle != "Cycle 5" {
+		t.Fatalf("%+v %v", b, err)
+	}
+}
