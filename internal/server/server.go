@@ -215,6 +215,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/users/{id}", s.requireAdmin(s.handleDeleteUser))
 	s.mux.HandleFunc("POST /api/users/{id}/password", s.requireAdmin(s.handleResetPassword))
 	s.mux.HandleFunc("POST /api/auth/password", s.requireAuth(sessionOnly, s.handleChangePassword))
+	// Saved filters belong to the user, not to a project: any token of the
+	// user may use them (read-only tokens only GET, as everywhere).
+	s.mux.HandleFunc("GET /api/filters", s.requireAuth(filtered, s.handleListFilters))
+	s.mux.HandleFunc("POST /api/filters", s.requireAuth(filtered, s.handleCreateFilter))
+	s.mux.HandleFunc("PATCH /api/filters/{id}", s.requireAuth(filtered, s.handleUpdateFilter))
+	s.mux.HandleFunc("DELETE /api/filters/{id}", s.requireAuth(filtered, s.handleDeleteFilter))
 	s.mux.HandleFunc("GET /api/tokens", s.requireAuth(sessionOnly, s.handleListTokens))
 	s.mux.HandleFunc("POST /api/tokens", s.requireAuth(sessionOnly, s.handleCreateToken))
 	s.mux.HandleFunc("DELETE /api/tokens/{id}", s.requireAuth(sessionOnly, s.handleDeleteToken))
@@ -1334,4 +1340,52 @@ func (s *Server) removeUploads(storageNames []string) {
 			log.Printf("remove upload %s: %v", name, err)
 		}
 	}
+}
+
+func (s *Server) handleListFilters(w http.ResponseWriter, r *http.Request) {
+	out, err := s.store.ListSavedFilters(currentUser(r).ID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleCreateFilter(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name  string `json:"name"`
+		Query string `json:"query"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, err)
+		return
+	}
+	f, err := s.store.CreateSavedFilter(currentUser(r).ID, body.Name, body.Query)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, f)
+}
+
+func (s *Server) handleUpdateFilter(w http.ResponseWriter, r *http.Request) {
+	var in db.SavedFilterInput
+	if err := decodeJSON(r, &in); err != nil {
+		writeErr(w, err)
+		return
+	}
+	f, err := s.store.UpdateSavedFilter(currentUser(r).ID, r.PathValue("id"), in)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, f)
+}
+
+func (s *Server) handleDeleteFilter(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeleteSavedFilter(currentUser(r).ID, r.PathValue("id")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

@@ -21,6 +21,8 @@ export function CommandPalette({
 }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Issue[]>([]);
+  // A query syntax error from the server (e.g. an unknown filter key), shown instead of "no results".
+  const [searchError, setSearchError] = useState('');
   const [selectedIdx, setSelectedIdx] = useState(0);
 
   useEffect(() => {
@@ -37,6 +39,7 @@ export function CommandPalette({
     const q = query.trim();
     if (!q) {
       setResults([]);
+      setSearchError('');
       setSelectedIdx(0);
       return;
     }
@@ -45,9 +48,13 @@ export function CommandPalette({
         .searchIssues(q)
         .then((res) => {
           setResults(res);
+          setSearchError('');
           setSelectedIdx(0);
         })
-        .catch(() => setResults([]));
+        .catch((e: Error) => {
+          setResults([]);
+          setSearchError(e.message.replace(/^validation error: /, ''));
+        });
     }, 80);
     return () => clearTimeout(timer);
   }, [query, open]);
@@ -151,7 +158,9 @@ export function CommandPalette({
 
         <div className="max-h-80 overflow-y-auto p-1.5">
           {showingIssues ? (
-            results.length === 0 ? (
+            searchError ? (
+              <div className="py-6 px-4 text-center text-xs text-red-500">{searchError}</div>
+            ) : results.length === 0 ? (
               <div className="py-8 text-center text-xs text-zinc-500">No matching issues found.</div>
             ) : (
               results.map((iss, idx) => (

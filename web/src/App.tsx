@@ -15,6 +15,10 @@ import {
   GitBranch,
   FolderPlus,
   Trash2,
+  Filter,
+  Bookmark,
+  Pencil,
+  X,
 } from 'lucide-react';
 import {
   api,
@@ -25,6 +29,8 @@ import {
   Label,
   PRIORITIES,
   Project,
+  queryFilterParams,
+  SavedFilter,
   User,
   WorkflowState,
 } from './api';
@@ -54,6 +60,15 @@ export function App() {
   const [view, setView] = useState<ViewMode>('board');
   const [filterCycle, setFilterCycle] = useState<string>('');
   const [filterAssignee, setFilterAssignee] = useState<string>('');
+  // Issue query filter (#17): the text being typed, the query applied, the IDs
+  // of the issues it matches (null: no filter), and the server's error if any.
+  const [queryDraft, setQueryDraft] = useState('');
+  const [query, setQuery] = useState('');
+  // The matching IDs and the project and query they were computed for; IDs for
+  // another project or query are not used (see filteredIssues).
+  const [queryMatch, setQueryMatch] = useState<{ key: string; query: string; ids: Set<string> } | null>(null);
+  const [queryError, setQueryError] = useState('');
+  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]);
   const [selectedIssueRef, setSelectedIssueRef] = useState<string | null>(null);
   const [focusedIdx, setFocusedIdx] = useState<number>(0);
   const [sseConnected, setSseConnected] = useState(false);
@@ -214,14 +229,92 @@ export function App() {
     };
   }, [user, refreshMeta]);
 
+  // The query filter asks the server which issues match: at once when the
+  // project or query changes, and again (debounced) when the issues change,
+  // so live updates stay filtered.
+  const lastQueryAsked = useRef('');
+  useEffect(() => {
+    const params = activeKey ? queryFilterParams(activeKey, query) : null;
+    if (!params) {
+      setQueryMatch(null);
+      setQueryError('');
+      lastQueryAsked.current = '';
+      return;
+    }
+    const asked = activeKey + '\n' + query;
+    const changed = asked !== lastQueryAsked.current;
+    if (changed) setQueryError(''); // an error was about the previous query
+    const delay = changed ? 0 : 250;
+    lastQueryAsked.current = asked;
+    let stale = false;
+    const timer = setTimeout(() => {
+      api
+        .listIssues(params)
+        .then((res) => {
+          if (stale) return;
+          setQueryMatch({ key: activeKey, query, ids: new Set(res.map((it) => it.id)) });
+          setQueryError('');
+        })
+        .catch((e: Error) => {
+          if (stale) return;
+          if (e.message.startsWith('validation error: ')) {
+            // The query itself is wrong: say why, and filter nothing.
+            setQueryMatch(null);
+            setQueryError(e.message.replace(/^validation error: /, ''));
+          } else {
+            // A network or server error: keep the last matches rather than
+            // showing every issue under a filter that looks applied.
+            setQueryError("Couldn't refresh the filter: " + e.message);
+          }
+        });
+    }, delay);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [activeKey, query, issues]);
+
+  const reloadFilters = useCallback(() => {
+    api
+      .listFilters()
+      .then(setSavedFilters)
+      .catch(() => setSavedFilters([]));
+  }, []);
+  useEffect(() => {
+    if (user) reloadFilters();
+  }, [user, reloadFilters]);
+
+  const applyQuery = (q: string) => {
+    setQueryDraft(q);
+    setQuery(q.trim());
+    if (q.trim() && view === 'cycles') setView('list'); // cycles view shows no issues
+  };
+
+  const saveCurrentQuery = async () => {
+    const name = window.prompt('Name this filter', '');
+    if (!name?.trim()) return;
+    try {
+      await api.createFilter(name, query);
+      reloadFilters();
+    } catch (e) {
+      window.alert((e as Error).message);
+    }
+  };
+
   const filteredIssues = useMemo(() => {
     return issues.filter((it) => {
       if (view === 'backlog' && it.state_category !== 'backlog') return false;
       if (filterCycle && it.cycle_id !== filterCycle) return false;
       if (filterAssignee && it.assignee_id !== filterAssignee) return false;
+      if (query) {
+        // Until matches for this project and query arrive, show nothing
+        // rather than issues the filter may exclude.
+        if (!queryMatch || queryMatch.key !== activeKey || queryMatch.query !== query) return !!queryError;
+        if (!queryMatch.ids.has(it.id)) return false;
+      }
       return true;
     });
-  }, [issues, view, filterCycle, filterAssignee]);
+  }, [issues, view, filterCycle, filterAssignee, query, queryMatch, queryError, activeKey]);
 
   // Linear-style global keyboard shortcuts
   useEffect(() => {
@@ -479,6 +572,58 @@ export function App() {
               </div>
             </div>
           )}
+
+          {currentProject && savedFilters.length > 0 && (
+            <div>
+              <span className="block px-2 mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                Saved filters
+              </span>
+              <div className="space-y-0.5">
+                {savedFilters.map((f) => (
+                  <div
+                    key={f.id}
+                    className={`group w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium ${
+                      query === f.query
+                        ? 'bg-zinc-200/80 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100'
+                        : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/50 dark:hover:bg-zinc-800/50'
+                    }`}
+                  >
+                    <button
+                      onClick={() => applyQuery(f.query)}
+                      title={f.query}
+                      className="flex items-center gap-2 min-w-0 flex-1 text-left cursor-pointer"
+                    >
+                      <Bookmark className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">{f.name}</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        const name = window.prompt('Rename filter', f.name);
+                        if (!name?.trim() || name === f.name) return;
+                        api.updateFilter(f.id, { name }).then(reloadFilters, (e: Error) => window.alert(e.message));
+                      }}
+                      title="Rename"
+                      aria-label={`Rename filter ${f.name}`}
+                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 cursor-pointer"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!window.confirm(`Delete the filter "${f.name}"?`)) return;
+                        api.deleteFilter(f.id).then(reloadFilters, (e: Error) => window.alert(e.message));
+                      }}
+                      title="Delete"
+                      aria-label={`Delete filter ${f.name}`}
+                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 text-zinc-400 hover:text-red-500 cursor-pointer"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -559,6 +704,50 @@ export function App() {
                     </option>
                   ))}
                 </select>
+                <div className="relative flex items-center min-w-0" title={queryError || 'e.g. assignee:me is:open label:bug priority:>=high'}>
+                  <Filter className="absolute left-2 w-3 h-3 text-zinc-400" />
+                  <input
+                    value={queryDraft}
+                    onChange={(e) => setQueryDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') applyQuery(queryDraft);
+                      if (e.key === 'Escape') applyQuery('');
+                    }}
+                    onBlur={() => queryDraft.trim() !== query && applyQuery(queryDraft)}
+                    placeholder="Filter: assignee:me is:open"
+                    aria-label="Filter issues"
+                    aria-invalid={!!queryError}
+                    aria-describedby={queryError ? 'query-error' : undefined}
+                    className={`w-64 text-xs pl-6 pr-6 py-1 rounded-md border bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200 ${
+                      queryError ? 'border-red-400' : 'border-zinc-200 dark:border-zinc-800'
+                    }`}
+                  />
+                  {queryDraft && (
+                    <button
+                      onClick={() => applyQuery('')}
+                      title="Clear filter"
+                      className="absolute right-1.5 text-zinc-400 hover:text-zinc-700 cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+                {queryError ? (
+                  <span id="query-error" role="status" className="text-[11px] text-red-500 truncate max-w-xs" title={queryError}>
+                    {queryError}
+                  </span>
+                ) : (
+                  query &&
+                  !savedFilters.some((f) => f.query === query) && (
+                    <button
+                      onClick={() => void saveCurrentQuery()}
+                      title="Save this filter"
+                      className="flex items-center gap-1 text-[11px] text-zinc-500 hover:text-indigo-600 cursor-pointer shrink-0"
+                    >
+                      <Bookmark className="w-3 h-3" /> Save
+                    </button>
+                  )
+                )}
               </div>
 
               <button
