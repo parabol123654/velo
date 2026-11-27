@@ -160,6 +160,7 @@ Velo must be reachable from GitHub for this to work (a VPS, or a tunnel when run
 ## Development
 
 ```bash
+make check                 # every check a pull request needs
 make test                  # Go tests
 make test-web              # web tests (Vitest)
 cd web && npm run dev      # UI dev server on :5173, proxies /api to :8080

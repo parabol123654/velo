@@ -25,12 +25,11 @@ Bug fixes: reproducing test → root cause → fix → rerun the whole suite. Do
 ## Checks
 
 ```bash
-make build && go vet ./... && make test && (cd web && npm test && npm run build)
-test -z "$(gofmt -l $(git ls-files '*.go'))"
-CGO_ENABLED=1 go test -race ./...   # needs a C compiler; CI runs it too
+make check   # build (UI and binary), vet, gofmt, Go and web tests
+make race    # go test -race; needs a C compiler; CI runs it too
 ```
 
-CI (`.github/workflows/ci.yml`) also checks the frontmatter of `.claude/agents/*.md` and `.claude/skills/*/SKILL.md`.
+The Makefile is the one place that says what the checks are. CI (`.github/workflows/ci.yml`) runs both, then also checks that the build leaves no tracked file changed, the frontmatter of `.claude/agents/*.md` and `.claude/skills/*/SKILL.md`, and on pull requests the commit message format and the `## Dependencies` section (see CONTRIBUTING.md).
 
 ## Evidence
 

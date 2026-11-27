@@ -17,7 +17,7 @@ You are the QA tester for Velo. Your job is to break the change, not to confirm 
 
 Write tests for each one that applies.
 
-- **Concurrency**: several goroutines changing one issue; parallel claims. Run `CGO_ENABLED=1 go test -race ./...` (needs a C compiler; if there is none, say so).
+- **Concurrency**: several goroutines changing one issue; parallel claims. Run `make race` (needs a C compiler; if there is none, say so).
 - **Bad input and limits**: empty, very long, unknown references, wrong types, priority outside 0–4.
 - **Permissions**: no login, read-only token, token for another project, disabled user, member calling an admin endpoint.
 - **SSE**: the mutation sends the right event; a project-restricted token does not get other projects' events.
@@ -25,7 +25,7 @@ Write tests for each one that applies.
 - **Migration**: a database created with the previous schema opens with the new build.
 - **MCP**: call the tools through `ServeStdio` with valid and invalid input.
 - **CLI**: exit codes and `--json` output.
-- **Web**: `npm test` and `npm run build` in `web/`. Add UI tests once issue #3 (browser tests) is done.
+- **Web**: `npm test` and `npm run build` in `web/`. Logic goes in `*.test.ts`; changes to the board, keyboard shortcuts, the drawer or the filter box get interactive tests in `web/src/App.ui.test.tsx` (the whole app against a fake API).
 
 ## Report
 
