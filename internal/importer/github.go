@@ -265,6 +265,9 @@ func githubError(resp *http.Response, raw []byte, repo string, hasToken bool) er
 	}
 	_ = json.Unmarshal(raw, &body)
 	tokenHint := "set GITHUB_TOKEN or --github-token"
+	if u, err := url.Parse(resp.Request.URL.String()); err == nil && !strings.EqualFold(u.Host, "api.github.com") {
+		tokenHint = "pass --github-token (GITHUB_TOKEN is only used for api.github.com)"
+	}
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
 		return fmt.Errorf("GitHub rejected the token (401 %s); check GITHUB_TOKEN or --github-token", body.Message)

@@ -91,3 +91,27 @@ func TestImportGitHubCommand(t *testing.T) {
 		t.Fatalf("bad --map-user: %v", err)
 	}
 }
+
+// The environment's tokens are github.com tokens: used for
+// https://api.github.com only, and never over the --github-token flag.
+func TestGitHubToken(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "gh-cli")
+	for _, tc := range []struct{ api, flag, want string }{
+		{"https://api.github.com", "", "gh-cli"},
+		{"https://API.github.com/", "", "gh-cli"},
+		{"https://api.github.com", "flag", "flag"},
+		{"http://api.github.com", "", ""},
+		{"https://ghe.acme.dev/api/v3", "", ""},
+		{"https://ghe.acme.dev/api/v3", "flag", "flag"},
+		{"://bad", "", ""},
+	} {
+		if got := githubToken(tc.api, tc.flag); got != tc.want {
+			t.Errorf("githubToken(%q, %q) = %q, want %q", tc.api, tc.flag, got, tc.want)
+		}
+	}
+	t.Setenv("GITHUB_TOKEN", "env")
+	if got := githubToken("https://api.github.com", ""); got != "env" {
+		t.Errorf("GITHUB_TOKEN before GH_TOKEN: %q", got)
+	}
+}

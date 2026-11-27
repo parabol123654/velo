@@ -110,7 +110,7 @@ func TestGitHubErrors(t *testing.T) {
 		token   string
 		want    string
 	}{
-		{"not found, no token", 404, nil, "", "or it is private: set GITHUB_TOKEN"},
+		{"not found, no token", 404, nil, "", "or it is private: pass --github-token"}, // not api.github.com
 		{"not found, token", 404, nil, "t", "or the token cannot read it"},
 		{"bad token", 401, nil, "t", "GitHub rejected the token"},
 		{"rate limit", 403, map[string]string{"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1700000000"}, "", "60 requests an hour"},

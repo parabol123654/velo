@@ -55,21 +55,31 @@ func runImport(args []string) error {
 		if err := common.check(); err != nil {
 			return err
 		}
-		// The environment's token is for github.com: sending it to another
-		// host (GitHub Enterprise, or a typo) needs --github-token.
-		if u, err := url.Parse(*api); *token == "" && err == nil && strings.EqualFold(u.Host, "api.github.com") {
-			if *token = os.Getenv("GITHUB_TOKEN"); *token == "" {
-				*token = os.Getenv("GH_TOKEN")
-			}
-		}
 		fmt.Fprintf(os.Stderr, "Reading %s from GitHub...\n", repo)
-		b, err := (&importer.GitHub{APIURL: *api, Token: *token, Users: users}).Batch(repo)
+		b, err := (&importer.GitHub{APIURL: *api, Token: githubToken(*api, *token), Users: users}).Batch(repo)
 		if err != nil {
 			return err
 		}
 		return common.send(b)
 	}
 	return fmt.Errorf("unknown import source %q\n%s", args[0], importUsage)
+}
+
+// githubToken is the --github-token flag, else for https://api.github.com
+// the environment's GITHUB_TOKEN or GH_TOKEN. Those are github.com tokens:
+// another host (GitHub Enterprise, a typo) or plain HTTP gets none of them.
+func githubToken(api, flag string) string {
+	if flag != "" {
+		return flag
+	}
+	u, err := url.Parse(api)
+	if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Host, "api.github.com") {
+		return ""
+	}
+	if t := os.Getenv("GITHUB_TOKEN"); t != "" {
+		return t
+	}
+	return os.Getenv("GH_TOKEN")
 }
 
 // importCommon holds the flags every import source takes.
