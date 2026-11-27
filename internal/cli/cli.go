@@ -455,8 +455,12 @@ func runIssue(args []string) error {
 					line = a.NewValue
 				case a.Field == "link" && a.NewValue != "":
 					line = "linked: " + strings.ReplaceAll(a.NewValue, "_", " ")
+				case a.Field == "link" && strings.Contains(a.OldValue, " "):
+					line = "unlinked: " + strings.ReplaceAll(a.OldValue, "_", " ")
 				case a.Field == "link":
 					line = "removed the link to " + a.OldValue
+				case a.Field == "description":
+					line = "edited the description"
 				case a.Field != "":
 					line = fmt.Sprintf("%s: %s → %s", a.Field, valueOrDash(a.OldValue), valueOrDash(a.NewValue))
 				}

@@ -35,6 +35,11 @@ describe('describeActivity', () => {
     expect(describeActivity({ action: 'updated', field: 'checklist', new_value: 'checked: deploy' })).toBe('checked: deploy');
     expect(describeActivity({ action: 'updated', field: 'link', new_value: 'blocked_by DEV-1' })).toBe('linked: blocked by DEV-1');
     expect(describeActivity({ action: 'updated', field: 'link', old_value: 'DEV-1' })).toBe('removed the link to DEV-1');
+    expect(describeActivity({ action: 'updated', field: 'link', old_value: 'blocked_by DEV-1' })).toBe('unlinked: blocked by DEV-1');
+    expect(describeActivity({ action: 'updated', field: 'description' })).toBe('edited the description');
+    expect(describeActivity({ action: 'updated', field: 'labels', new_value: 'bug, feature' })).toBe(
+      'changed labels from "none" to "bug, feature"'
+    );
     expect(describeActivity({ action: 'updated', field: 'priority', old_value: 'Low', new_value: 'High' })).toBe(
       'changed priority from "Low" to "High"'
     );

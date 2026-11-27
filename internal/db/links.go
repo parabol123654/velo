@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -78,11 +79,8 @@ func (s *Store) LinkIssues(actorID, ref, kind, targetRef string) (string, string
 	); err != nil {
 		return "", "", err
 	}
-	if _, err := tx.Exec(
-		`INSERT INTO activities (id, issue_id, actor_id, action, field, old_value, new_value, via, created_at)
-		 VALUES (?, ?, ?, 'updated', 'link', '', ?, ?, ?)`,
-		newID(), from.ID, actorID, strings.ToLower(kind)+" "+to.Identifier, s.via, now,
-	); err != nil {
+	seen := strings.ToLower(strings.TrimSpace(kind)) // as the caller named it, from "from"
+	if err := s.logLink(tx, actorID, from, to, "", seen); err != nil {
 		return "", "", err
 	}
 	return from.ID, to.ID, tx.Commit()
@@ -103,22 +101,45 @@ func (s *Store) UnlinkIssues(actorID, ref, targetRef string) (string, string, er
 		return "", "", err
 	}
 	defer tx.Rollback()
-	res, err := tx.Exec(
-		`DELETE FROM issue_links WHERE (source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?)`,
-		from.ID, to.ID, to.ID, from.ID,
+	// The kinds being removed, as "from" sees them.
+	rows, err := tx.Query(
+		`SELECT CASE WHEN source_id = ? THEN kind ELSE kind || '~' END FROM issue_links
+		 WHERE (source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?)`,
+		from.ID, from.ID, to.ID, to.ID, from.ID,
 	)
 	if err != nil {
 		return "", "", err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	var kinds []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			rows.Close()
+			return "", "", err
+		}
+		if base, rev := strings.CutSuffix(k, "~"); rev {
+			k = reverseKind[base]
+		}
+		kinds = append(kinds, k)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return "", "", err
+	}
+	if len(kinds) == 0 {
 		return "", "", fmt.Errorf("%w: %s and %s are not linked", ErrNotFound, from.Identifier, to.Identifier)
 	}
 	if _, err := tx.Exec(
-		`INSERT INTO activities (id, issue_id, actor_id, action, field, old_value, new_value, via, created_at)
-		 VALUES (?, ?, ?, 'updated', 'link', ?, '', ?, ?)`,
-		newID(), from.ID, actorID, to.Identifier, s.via, nowUTC(),
+		`DELETE FROM issue_links WHERE (source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?)`,
+		from.ID, to.ID, to.ID, from.ID,
 	); err != nil {
 		return "", "", err
+	}
+	slices.Sort(kinds)
+	for _, k := range kinds {
+		if err := s.logLink(tx, actorID, from, to, k, ""); err != nil {
+			return "", "", err
+		}
 	}
 	return from.ID, to.ID, tx.Commit()
 }
@@ -220,4 +241,40 @@ func blockChain(tx *sql.Tx, from, to string) ([]string, error) {
 		}
 	}
 	return nil, nil
+}
+
+// reverseKind names a link kind as seen from the other issue.
+var reverseKind = map[string]string{
+	"blocks": "blocked_by", "blocked_by": "blocks",
+	"duplicates": "duplicated_by", "duplicated_by": "duplicates",
+	"relates": "relates",
+}
+
+// logLink records a link (added) or an unlink (removed) on both issues, each
+// from its own side: "blocks DEV-2" on one is "blocked_by DEV-1" on the other.
+// removed and added are kinds as seen from "from"; one of them is empty.
+func (s *Store) logLink(tx *sql.Tx, actorID string, from, to *Issue, removed, added string) error {
+	side := func(kind string, other *Issue) string {
+		if kind == "" {
+			return ""
+		}
+		return kind + " " + other.Identifier
+	}
+	now := nowUTC()
+	for _, e := range []struct {
+		issue    *Issue
+		old, new string
+	}{
+		{from, side(removed, to), side(added, to)},
+		{to, side(reverseKind[removed], from), side(reverseKind[added], from)},
+	} {
+		if _, err := tx.Exec(
+			`INSERT INTO activities (id, issue_id, actor_id, action, field, old_value, new_value, via, created_at)
+			 VALUES (?, ?, ?, 'updated', 'link', ?, ?, ?, ?)`,
+			newID(), e.issue.ID, actorID, e.old, e.new, s.via, now,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
