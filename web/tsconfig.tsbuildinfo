@@ -1,1 +1,0 @@
-{"root":["./src/App.tsx","./src/api.test.ts","./src/api.ts","./src/live.test.ts","./src/live.ts","./src/main.tsx","./src/components/AuthScreen.tsx","./src/components/CommandPalette.tsx","./src/components/IssueDrawer.tsx","./src/components/Markdown.test.tsx","./src/components/Markdown.tsx","./src/components/SettingsModal.tsx"],"version":"5.7.3"}

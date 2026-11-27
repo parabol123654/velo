@@ -101,8 +101,7 @@ None open.
 
 Order for new work. Issues titled "Idea:" (#5, #7, #8) stay out until the discussion there ends with a decision.
 
-1. [#17](https://github.com/parabol123654/velo/issues/17) Search syntax and saved filters.
-2. [#16](https://github.com/parabol123654/velo/issues/16) Imports from GitHub Issues, Jira and Linear.
+1. [#16](https://github.com/parabol123654/velo/issues/16) Imports from GitHub Issues, Jira and Linear.
 
 ## Code map
 
