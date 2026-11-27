@@ -430,7 +430,7 @@ func (s *Store) DeleteCycle(id string) error {
 	return nil
 }
 
-// defaultLabels are created with every new project.
+// defaultStates are created with every new project.
 var defaultStates = []struct {
 	name     string
 	category string
@@ -445,6 +445,7 @@ var defaultStates = []struct {
 	{"Canceled", "canceled", "#ef4444", 6000},
 }
 
+// defaultLabels are created with every new project.
 var defaultLabels = []struct {
 	name  string
 	color string

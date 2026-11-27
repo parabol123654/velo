@@ -78,3 +78,29 @@ func TestImportRejectsUnknownStates(t *testing.T) {
 		}
 	}
 }
+
+// Labels match like states: an issue's "LỖI" finds the bundle's "lỗi",
+// where CreateIssue's own SQLite NOCASE match folds ASCII only.
+func TestImportMatchesLabelsIgnoringUnicodeCase(t *testing.T) {
+	st := newTestStore(t)
+	admin, _ := st.CreateFirstAdmin("admin@velo.local", "Admin", "secret123")
+	b := &ExportBundle{
+		Project: Project{Key: "IMP", Name: "Imported"},
+		Labels:  []Label{{Name: "lỗi", Color: "#000000"}, {Name: "LỖI", Color: "#ffffff"}},
+		Issues:  []ExportIssue{{Identifier: "OLD-1", Title: "a", Labels: []string{"LỖI", "BUG"}}},
+	}
+	if _, err := st.ImportProjectJSON(admin.ID, b); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	iss, err := st.GetIssue("IMP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, l := range iss.Labels {
+		names = append(names, l.Name)
+	}
+	if strings.Join(names, ",") != "bug,lỗi" {
+		t.Fatalf("labels: %v", names)
+	}
+}
