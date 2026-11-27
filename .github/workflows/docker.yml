@@ -1,0 +1,62 @@
+name: Docker
+
+# Builds the image and checks its HEALTHCHECK in a real container (#1):
+# healthy after start, unhealthy when the server stops answering.
+on:
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - .github/workflows/docker.yml
+      - go.mod
+      - go.sum
+      - web/package.json
+      - web/package-lock.json
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - .github/workflows/docker.yml
+      - go.mod
+      - go.sum
+      - web/package.json
+      - web/package-lock.json
+  # The base images use moving tags; catch an upstream change weekly.
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+jobs:
+  healthcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: docker build --build-arg VERSION=ci -t velo .
+      - name: Start
+        run: |
+          mkdir -p "$RUNNER_TEMP/data"
+          docker run -d --name velo -p 8080:8080 -v "$RUNNER_TEMP/data:/data" velo
+      - name: Healthy, then unhealthy when the server stops answering
+        run: |
+          # wait_for STATUS SECONDS: poll the container's health status.
+          wait_for() {
+            SECONDS=0
+            for _ in $(seq "$2"); do
+              s="$(docker inspect -f '{{.State.Health.Status}}' velo)"
+              [ "$s" = "$1" ] && { echo "$1 after ${SECONDS}s"; return 0; }
+              sleep 1
+            done
+            echo "still $s, wanted $1"; docker inspect -f '{{json .State.Health}}' velo; docker logs velo; return 1
+          }
+          wait_for healthy 90
+          curl -fsS http://127.0.0.1:8080/api/health
+          docker exec velo velo version
+          ls "$RUNNER_TEMP/data"
+          # The server is PID 1, so killing it would stop the container;
+          # SIGSTOP freezes it while the container keeps running.
+          docker kill --signal STOP velo
+          wait_for unhealthy 150
+          docker kill --signal CONT velo
+          wait_for healthy 60
