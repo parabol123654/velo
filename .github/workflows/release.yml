@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: write
-  packages: write
 
 jobs:
   release:
@@ -37,7 +36,11 @@ jobs:
   # Multi-arch image on GitHub Container Registry, tagged with the release
   # tag and latest (#18).
   image:
+    needs: release # no image without a matching release
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -53,6 +56,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           build-args: VERSION=${{ github.ref_name }}
           push: true
+          # latest only for a full release: a pre-release tag (v0.4.0-rc1) has a "-".
           tags: |
             ghcr.io/parabol123654/velo:${{ github.ref_name }}
-            ghcr.io/parabol123654/velo:latest
+            ${{ !contains(github.ref_name, '-') && 'ghcr.io/parabol123654/velo:latest' || '' }}

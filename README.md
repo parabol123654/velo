@@ -33,7 +33,7 @@ make build
 
 Open http://localhost:8080 and create the admin account.
 
-With Docker (images for `linux/amd64` and `linux/arm64`, tagged with each release and `latest`):
+With Docker (images for `linux/amd64` and `linux/arm64`, published from v0.4.0 on and tagged with each release; `latest` is the newest full release):
 
 ```bash
 docker run -d -p 8080:8080 -v "$(pwd)/data:/data" ghcr.io/parabol123654/velo:latest
