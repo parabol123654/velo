@@ -185,7 +185,7 @@ func TestQASearchDeleteProjectCascades(t *testing.T) {
 	if _, err := st.CreateIssue(admin.ID, CreateIssueInput{ProjectRef: "OPS", Title: "Đăng nhập OPS"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.DeleteProject("OPS"); err != nil {
+	if _, _, err := st.DeleteProject("OPS"); err != nil {
 		t.Fatal(err)
 	}
 	ftsIntegrity(t, st)
@@ -252,7 +252,7 @@ func TestQASearchOldDatabaseFileReopened(t *testing.T) {
 	if _, err := st.UpdateIssue(admin.ID, "DEV-1", UpdateIssueInput{Title: &title}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.DeleteIssue("DEV-2"); err != nil {
+	if _, err := st.DeleteIssue("DEV-2"); err != nil {
 		t.Fatal(err)
 	}
 	st.Close()

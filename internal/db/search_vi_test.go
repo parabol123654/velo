@@ -67,7 +67,7 @@ func TestVietnameseSearchFoldsAccents(t *testing.T) {
 	if got := searchTitles(t, st, "doi mat khau"); !got[title] || len(got) != 1 {
 		t.Errorf("after edit: %v", got)
 	}
-	if err := st.DeleteIssue("DEV-1"); err != nil {
+	if _, err := st.DeleteIssue("DEV-1"); err != nil {
 		t.Fatal(err)
 	}
 	// The 'delete' values the triggers send match what was indexed.
