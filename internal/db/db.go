@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -208,31 +210,6 @@ CREATE INDEX IF NOT EXISTS idx_issues_parent ON issues(parent_id);
 CREATE INDEX IF NOT EXISTS idx_issues_cycle ON issues(cycle_id);
 CREATE INDEX IF NOT EXISTS idx_issues_assignee ON issues(assignee_id);
 
-CREATE VIRTUAL TABLE IF NOT EXISTS issues_fts USING fts5(
-	identifier,
-	title,
-	description,
-	content='issues',
-	content_rowid='rowid'
-);
-
-CREATE TRIGGER IF NOT EXISTS issues_ai AFTER INSERT ON issues BEGIN
-	INSERT INTO issues_fts(rowid, identifier, title, description)
-	VALUES (new.rowid, new.identifier, new.title, new.description);
-END;
-
-CREATE TRIGGER IF NOT EXISTS issues_ad AFTER DELETE ON issues BEGIN
-	INSERT INTO issues_fts(issues_fts, rowid, identifier, title, description)
-	VALUES ('delete', old.rowid, old.identifier, old.title, old.description);
-END;
-
-CREATE TRIGGER IF NOT EXISTS issues_au AFTER UPDATE OF identifier, title, description ON issues BEGIN
-	INSERT INTO issues_fts(issues_fts, rowid, identifier, title, description)
-	VALUES ('delete', old.rowid, old.identifier, old.title, old.description);
-	INSERT INTO issues_fts(rowid, identifier, title, description)
-	VALUES (new.rowid, new.identifier, new.title, new.description);
-END;
-
 CREATE TABLE IF NOT EXISTS issue_labels (
 	issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
 	label_id TEXT NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
@@ -302,8 +279,109 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
-	return nil
+	return s.migrateSearch()
 }
+
+// The search index folds Vietnamese accents: the tokenizer strips every
+// diacritic (remove_diacritics 2, so ậ and ố fold too), and issues_fts_src
+// turns đ/Đ, a separate letter rather than an accented d, into d. Queries go
+// through foldD as well. The index is derived data, rebuilt from issues.
+//
+// Every copy of the đ expression below (view and triggers) and foldD must
+// stay identical: with external content, a 'delete' must pass exactly the
+// values that were indexed, or the index silently goes wrong.
+const searchSQL = `
+CREATE VIEW issues_fts_src AS
+SELECT rowid AS rid, identifier,
+       replace(replace(title, 'đ', 'd'), 'Đ', 'D') AS title,
+       replace(replace(description, 'đ', 'd'), 'Đ', 'D') AS description
+FROM issues;
+
+CREATE VIRTUAL TABLE issues_fts USING fts5(
+	identifier,
+	title,
+	description,
+	content='issues_fts_src',
+	content_rowid='rid',
+	tokenize='unicode61 remove_diacritics 2'
+);
+
+CREATE TRIGGER issues_ai AFTER INSERT ON issues BEGIN
+	INSERT INTO issues_fts(rowid, identifier, title, description)
+	VALUES (new.rowid, new.identifier,
+	        replace(replace(new.title, 'đ', 'd'), 'Đ', 'D'),
+	        replace(replace(new.description, 'đ', 'd'), 'Đ', 'D'));
+END;
+
+CREATE TRIGGER issues_ad AFTER DELETE ON issues BEGIN
+	INSERT INTO issues_fts(issues_fts, rowid, identifier, title, description)
+	VALUES ('delete', old.rowid, old.identifier,
+	        replace(replace(old.title, 'đ', 'd'), 'Đ', 'D'),
+	        replace(replace(old.description, 'đ', 'd'), 'Đ', 'D'));
+END;
+
+CREATE TRIGGER issues_au AFTER UPDATE OF identifier, title, description ON issues BEGIN
+	INSERT INTO issues_fts(issues_fts, rowid, identifier, title, description)
+	VALUES ('delete', old.rowid, old.identifier,
+	        replace(replace(old.title, 'đ', 'd'), 'Đ', 'D'),
+	        replace(replace(old.description, 'đ', 'd'), 'Đ', 'D'));
+	INSERT INTO issues_fts(rowid, identifier, title, description)
+	VALUES (new.rowid, new.identifier,
+	        replace(replace(new.title, 'đ', 'd'), 'Đ', 'D'),
+	        replace(replace(new.description, 'đ', 'd'), 'Đ', 'D'));
+END;
+
+INSERT INTO issues_fts(issues_fts) VALUES ('rebuild');
+`
+
+// migrateSearch (re)creates the search index when it is missing or was made
+// by a release before accent folding. Runs once; later opens skip it.
+//
+// The check runs under the write lock (BEGIN IMMEDIATE): velo backup may open
+// the file while the server runs, and only one of them should rebuild.
+func (s *Store) migrateSearch() error {
+	ctx := context.Background()
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed { // also on panic: never hand the pool an open transaction
+			_, _ = conn.ExecContext(ctx, `ROLLBACK`)
+		}
+	}()
+	var def string
+	err = conn.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'issues_fts'`).Scan(&def)
+	switch {
+	case err == nil && strings.Contains(def, "remove_diacritics 2"):
+		_, err = conn.ExecContext(ctx, `COMMIT`)
+		committed = err == nil
+		return err
+	case err != nil && !errors.Is(err, sql.ErrNoRows):
+		return err
+	}
+	if _, err = conn.ExecContext(ctx, `
+		DROP TRIGGER IF EXISTS issues_ai;
+		DROP TRIGGER IF EXISTS issues_ad;
+		DROP TRIGGER IF EXISTS issues_au;
+		DROP TABLE IF EXISTS issues_fts;
+		DROP VIEW IF EXISTS issues_fts_src;`+searchSQL); err != nil {
+		return err
+	}
+	_, err = conn.ExecContext(ctx, `COMMIT`)
+	committed = err == nil
+	return err
+}
+
+// foldD turns đ/Đ into d/D, as the search index does.
+func foldD(s string) string { return dFolder.Replace(s) }
+
+var dFolder = strings.NewReplacer("đ", "d", "Đ", "D")
 
 // addColumn adds a column unless it already exists.
 func (s *Store) addColumn(table, column, def string) error {
