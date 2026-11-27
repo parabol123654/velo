@@ -19,6 +19,7 @@ import (
 
 const importUsage = `usage: velo import <source> ... --project KEY [--dry-run]
   velo import github OWNER/REPO --project KEY  issues, comments, milestones and sub-issues of a GitHub repository
+  velo import jira EXPORT.csv --project KEY    a Jira CSV export (all fields)
   velo import file BATCH.json --project KEY    a batch in the API's import format (see SPEC.md)`
 
 func runImport(args []string) error {
@@ -60,6 +61,32 @@ func runImport(args []string) error {
 		if err != nil {
 			return err
 		}
+		return common.send(b)
+
+	case "jira":
+		fs, common := importFlags("import jira")
+		site := fs.String("jira-url", "", "Jira site, e.g. https://SITE.atlassian.net, to link each issue to its original")
+		users := userMap{}
+		fs.Var(users, "map-user", "NAME=EMAIL: assign NAME's issues to the Velo user with EMAIL (repeatable)")
+		states := stateMap{}
+		fs.Var(states, "state-map", "STATUS=STATE: put issues in Jira STATUS into the Velo state STATE (repeatable)")
+		path, err := parseWithArg(fs, args[1:], "velo import jira EXPORT.csv --project KEY [--map-user NAME=EMAIL]... [--state-map STATUS=STATE]... [--dry-run]")
+		if err != nil {
+			return err
+		}
+		if err := common.check(); err != nil {
+			return err
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		b, warnings, err := (&importer.JiraCSV{BaseURL: *site, Users: users, StateMap: states}).Batch(f)
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		printWarnings(warnings)
 		return common.send(b)
 	}
 	return fmt.Errorf("unknown import source %q\n%s", args[0], importUsage)
@@ -153,6 +180,26 @@ func (m userMap) Set(v string) error {
 	}
 	m[login] = strings.TrimSpace(email)
 	return nil
+}
+
+// stateMap is a repeatable STATUS=STATE flag; statuses match ignoring case.
+type stateMap map[string]string
+
+func (m stateMap) String() string { return "" }
+
+func (m stateMap) Set(v string) error {
+	status, state, ok := strings.Cut(v, "=")
+	if !ok || strings.TrimSpace(status) == "" || strings.TrimSpace(state) == "" {
+		return fmt.Errorf("want STATUS=STATE, got %q", v)
+	}
+	m[strings.ToLower(strings.TrimSpace(status))] = strings.TrimSpace(state)
+	return nil
+}
+
+func printWarnings(warnings []string) {
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, "warning:", w)
+	}
 }
 
 // Limits for one request, just under the server's (db.ImportIssues and the

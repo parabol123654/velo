@@ -106,6 +106,7 @@ Usage:
   velo uploads prune [--data ./data] [--apply]  List (or with --apply, delete) uploads nothing uses
   velo agent --cmd '<command>' [--label agent]  Run a local coding agent on issues labeled for it
   velo import github <OWNER/REPO> --project KEY Import a GitHub repository's issues [--map-user LOGIN=EMAIL] [--dry-run]
+  velo import jira <EXPORT.csv> --project KEY   Import a Jira CSV export [--map-user NAME=EMAIL] [--state-map STATUS=STATE]
   velo import file <BATCH.json> --project KEY   Import issues in the API's batch format [--dry-run]; reruns skip what exists
   velo version                                  Print version
 `)

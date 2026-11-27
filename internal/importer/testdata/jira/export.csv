@@ -1,0 +1,7 @@
+﻿Summary,Issue key,Issue id,Issue Type,Status,Status Category,Priority,Resolution,Assignee,Reporter,Created,Description,Labels,Labels,Sprint,Sprint,Comment,Comment,Parent,Outward issue link (Blocks),Inward issue link (Blocks),Outward issue link (Duplicate),Outward issue link (Relates)
+Login fails on Safari,WEB-1,10001,Bug,Done,Done,High,Done,Nguyễn Văn A,Trần Thị B,02/Mar/24 10:00 AM,"Steps:
+1. Open Safari, then ""Login""
+2. See error",bug,Lỗi,Sprint 1,Sprint 2,"02/Mar/24 11:00 AM;557058:abc;Reproduced, on 17.2.","03/Mar/24 9:05 AM;557058:def;Đã sửa.",,WEB-3,,,
+Dark mode,WEB-2,10002,Story,Closed,Done,Lowest,Won't Do,,Trần Thị B,03/Mar/24 08:30 PM,,,,,,,,,,,WEB-1,OTHER-9
+Thêm trang hồ sơ,WEB-3,10003,Story,QA,In Progress,Medium,,Bob Smith,Bob Smith,04/Mar/24 10:00 AM,Profile page,,,Sprint 2,,,,,,WEB-1,,
+Write tests,WEB-4,10004,Sub-task,To Do,To Do,Highest,,,Bob Smith,05/Mar/24 10:00 AM,,,,,,,,10003,,,,
