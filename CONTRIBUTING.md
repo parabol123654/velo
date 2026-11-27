@@ -31,7 +31,7 @@ gofmt -l $(git ls-files '*.go')             # must print nothing
 CGO_ENABLED=1 go test -race ./...           # needs a C compiler; CI runs it in the race job
 ```
 
-Every change comes with a test that would fail without it. Bug fixes start with a test that reproduces the bug.
+Every change comes with a test that would fail without it. Bug fixes start with a test that reproduces the bug. Web tests run in Vitest: pure logic in `*.test.ts`, and the whole app against a fake API in `web/src/App.ui.test.tsx` (jsdom and Testing Library). Extend the latter when you change the board, keyboard shortcuts, the drawer or the filter box.
 
 ## Rules that decide most reviews
 
