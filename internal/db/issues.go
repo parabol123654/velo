@@ -354,10 +354,16 @@ func (s *Store) ListIssues(f IssueFilter) ([]Issue, error) {
 		clauses = append(clauses, "EXISTS (SELECT 1 FROM issue_labels il JOIN labels lb ON lb.id = il.label_id WHERE il.issue_id = i.id AND (lb.id = ? OR lb.name = ? COLLATE NOCASE))")
 		args = append(args, f.LabelID, f.LabelID)
 	}
-	if q := strings.TrimSpace(f.Query); q != "" {
-		ftsQ := buildFTSQuery(q)
-		clauses = append(clauses, "(i.rowid IN (SELECT rowid FROM issues_fts WHERE issues_fts MATCH ?) OR i.identifier LIKE ?)")
-		args = append(args, ftsQ, "%"+q+"%")
+	// NUL would cut the FTS query short; a query of quotes only leaves no FTS
+	// terms, and an empty MATCH is a syntax error, so match identifiers only.
+	if q := strings.TrimSpace(strings.ReplaceAll(f.Query, "\x00", "")); q != "" {
+		if ftsQ := buildFTSQuery(foldD(q)); ftsQ != "" {
+			clauses = append(clauses, "(i.rowid IN (SELECT rowid FROM issues_fts WHERE issues_fts MATCH ?) OR i.identifier LIKE ?)")
+			args = append(args, ftsQ, "%"+q+"%")
+		} else {
+			clauses = append(clauses, "i.identifier LIKE ?")
+			args = append(args, "%"+q+"%")
+		}
 	}
 
 	query := baseIssueSelect
