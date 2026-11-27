@@ -1,9 +1,11 @@
 package db
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -184,9 +186,29 @@ func TestConcurrentIssuesFTSAndExportImport(t *testing.T) {
 	if err != nil || !strings.Contains(md, "**DEV-1**") {
 		t.Fatalf("ExportProjectMarkdown failed: %v\n%s", err, md)
 	}
+	// Links survive the round trip, including one stored swapped (blocked_by).
+	if _, _, err := st.LinkIssues(admin.ID, "DEV-2", "blocked_by", "DEV-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.LinkIssues(admin.ID, "DEV-2", "relates", "DEV-3"); err != nil {
+		t.Fatal(err)
+	}
+	wantLinks := linksByTitle(t, st, "DEV")
+	if len(wantLinks) != 4 { // each link seen from both sides
+		t.Fatalf("setup: links %v", wantLinks)
+	}
 	bundle, err := st.ExportProjectJSON("DEV")
 	if err != nil {
 		t.Fatalf("ExportProjectJSON: %v", err)
+	}
+	// Through JSON, as a real export file would travel.
+	raw, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle = &ExportBundle{}
+	if err := json.Unmarshal(raw, bundle); err != nil {
+		t.Fatal(err)
 	}
 	bundle.Project.Key = "IMP"
 	bundle.Project.Name = "Imported Platform"
@@ -194,6 +216,31 @@ func TestConcurrentIssuesFTSAndExportImport(t *testing.T) {
 	if err != nil || impProj.IssueCount != total+1 {
 		t.Fatalf("ImportProjectJSON failed: %v, %+v", err, impProj)
 	}
+	if got := linksByTitle(t, st, "IMP"); strings.Join(got, "\n") != strings.Join(wantLinks, "\n") {
+		t.Fatalf("links after import:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(wantLinks, "\n"))
+	}
+}
+
+// linksByTitle lists a project's links as "title kind title", sorted, so two
+// projects with the same issues compare equal whatever their numbers are.
+func linksByTitle(t *testing.T, st *Store, project string) []string {
+	t.Helper()
+	issues, err := st.ListIssues(IssueFilter{ProjectRef: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, it := range issues {
+		full, err := st.GetIssue(it.Identifier)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, l := range full.Links {
+			out = append(out, it.Title+" "+l.Kind+" "+l.Issue.Title)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func TestBackupTo(t *testing.T) {

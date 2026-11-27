@@ -244,6 +244,15 @@ type ExportBundle struct {
 	Labels     []Label         `json:"labels"`
 	Cycles     []Cycle         `json:"cycles"`
 	Issues     []ExportIssue   `json:"issues"`
+	Links      []ExportLink    `json:"links,omitempty"`
+}
+
+// ExportLink is an issue link in its stored form: Source blocks, relates to or
+// duplicates Target, both by identifier.
+type ExportLink struct {
+	Source string `json:"source"`
+	Kind   string `json:"kind"`
+	Target string `json:"target"`
 }
 
 // IssueLink is a relation seen from one issue. Kind is blocks, blocked_by,

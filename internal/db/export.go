@@ -2,6 +2,8 @@ package db
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +27,11 @@ func (s *Store) ExportProjectJSON(projectRef string) (*ExportBundle, error) {
 		return nil, err
 	}
 	issues, err := s.ListIssues(IssueFilter{ProjectRef: proj.ID})
+	if err != nil {
+		return nil, err
+	}
+
+	links, err := s.projectLinks(proj.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -74,6 +81,7 @@ func (s *Store) ExportProjectJSON(projectRef string) (*ExportBundle, error) {
 		Labels:     labels,
 		Cycles:     cycles,
 		Issues:     expIssues,
+		Links:      links,
 	}, nil
 }
 
@@ -138,6 +146,42 @@ func (s *Store) ImportProjectJSON(actorID string, b *ExportBundle) (*Project, er
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("%w: issues use labels the bundle does not define: %s", ErrValidation, strings.Join(missing, ", "))
 	}
+	inBundle := map[string]bool{}
+	for _, ei := range b.Issues {
+		inBundle[ei.Identifier] = true
+	}
+	// Refuse here what LinkIssues would refuse later, after the project exists.
+	pairs := map[[3]string]bool{}   // "kind a b" with a < b: one link per kind and pair
+	blocks := map[string][]string{} // source -> targets of blocks links
+	for _, l := range b.Links {
+		bad := func(why string) error {
+			return fmt.Errorf("%w: link %s %s %s %s", ErrValidation, l.Source, l.Kind, l.Target, why)
+		}
+		k, ok := linkKinds[strings.ToLower(strings.TrimSpace(l.Kind))]
+		switch {
+		case !ok:
+			return nil, bad("has an unknown kind")
+		case !inBundle[l.Source] || !inBundle[l.Target]:
+			return nil, bad("names an issue the bundle does not contain")
+		case l.Source == l.Target:
+			return nil, bad("links an issue to itself")
+		}
+		src, dst := l.Source, l.Target
+		if k.swap {
+			src, dst = dst, src
+		}
+		a, z := min(src, dst), max(src, dst)
+		if pairs[[3]string{k.stored, a, z}] {
+			return nil, bad("repeats another link")
+		}
+		pairs[[3]string{k.stored, a, z}] = true
+		if k.stored == "blocks" {
+			blocks[src] = append(blocks[src], dst)
+		}
+	}
+	if loop := blocksLoop(blocks); loop != nil {
+		return nil, fmt.Errorf("%w: links form a blocking loop: %s", ErrValidation, strings.Join(loop, " → "))
+	}
 	proj, err := s.CreateProject(b.Project.Key, b.Project.Name, b.Project.Description)
 	if err != nil {
 		return nil, err
@@ -184,5 +228,72 @@ func (s *Store) ImportProjectJSON(actorID string, b *ExportBundle) (*Project, er
 			}
 		}
 	}
+
+	// Links last, once every issue exists.
+	for _, l := range b.Links {
+		if _, _, err := s.LinkIssues(actorID, identMap[l.Source], l.Kind, identMap[l.Target]); err != nil {
+			return nil, fmt.Errorf("link %s %s %s: %w", l.Source, l.Kind, l.Target, err)
+		}
+	}
 	return s.GetProject(proj.ID)
+}
+
+// projectLinks lists a project's links in stored form, by identifier.
+func (s *Store) projectLinks(projectID string) ([]ExportLink, error) {
+	rows, err := s.db.Query(`
+		SELECT src.identifier, l.kind, dst.identifier
+		FROM issue_links l
+		JOIN issues src ON src.id = l.source_id
+		JOIN issues dst ON dst.id = l.target_id
+		WHERE src.project_id = ?
+		ORDER BY src.number, dst.number, l.kind`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ExportLink
+	for rows.Next() {
+		var l ExportLink
+		if err := rows.Scan(&l.Source, &l.Kind, &l.Target); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// blocksLoop returns one loop in a blocks graph, first issue repeated at the
+// end, or nil when there is none.
+func blocksLoop(edges map[string][]string) []string {
+	const visiting, done = 1, 2
+	state := map[string]int{}
+	var path []string
+	var walk func(n string) []string
+	walk = func(n string) []string {
+		state[n] = visiting
+		path = append(path, n)
+		for _, m := range edges[n] {
+			if state[m] == visiting {
+				i := slices.Index(path, m)
+				return append(slices.Clone(path[i:]), m)
+			}
+			if state[m] == 0 {
+				if loop := walk(m); loop != nil {
+					return loop
+				}
+			}
+		}
+		path = path[:len(path)-1]
+		state[n] = done
+		return nil
+	}
+	starts := slices.Sorted(maps.Keys(edges))
+	for _, n := range starts {
+		if state[n] == 0 {
+			if loop := walk(n); loop != nil {
+				return loop
+			}
+		}
+	}
+	return nil
 }
