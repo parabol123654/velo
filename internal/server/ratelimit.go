@@ -84,11 +84,36 @@ func (l *loginLimiter) reset(key string) {
 }
 
 // loginKeys identifies a login attempt by client IP and by email. The IP is
-// the TCP peer; behind a reverse proxy every client shares the proxy's IP.
-func loginKeys(r *http.Request, email string) (ipKey, emailKey string) {
+// the TCP peer, or with TrustProxy the last X-Forwarded-For address: the one
+// the proxy itself appended. Earlier addresses come from the client and could
+// be forged to escape the limit.
+func (s *Server) loginKeys(r *http.Request, email string) (ipKey, emailKey string) {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
+	if s.TrustProxy {
+		if xff := r.Header.Values("X-Forwarded-For"); len(xff) > 0 {
+			parts := strings.Split(xff[len(xff)-1], ",")
+			if ip := parseForwardedIP(parts[len(parts)-1]); ip != nil {
+				host = ip.String()
+			}
+		}
+	}
 	return "ip:" + host, "email:" + strings.ToLower(strings.TrimSpace(email))
+}
+
+// parseForwardedIP reads one X-Forwarded-For entry: a bare IP, or one with a
+// port ("1.2.3.4:5678", "[2001:db8::1]:443") as some proxies send, or an IPv6
+// zone. It returns nil when the entry is not an address.
+func parseForwardedIP(entry string) net.IP {
+	entry = strings.TrimSpace(entry)
+	if h, _, err := net.SplitHostPort(entry); err == nil {
+		entry = h
+	}
+	entry = strings.TrimSuffix(strings.TrimPrefix(entry, "["), "]")
+	if i := strings.IndexByte(entry, '%'); i >= 0 {
+		entry = entry[:i]
+	}
+	return net.ParseIP(entry)
 }

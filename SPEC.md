@@ -38,13 +38,14 @@ These hold for every change. Breaking one needs an explicit decision, recorded h
 
 - **First run:** the first visitor creates the admin. After that, accounts come from single-use invite links (7 days) or are created by an admin. No email is sent.
 - **Roles:** `admin` and `member`. Members can do everything with projects and issues. Only admins manage users and invites.
-- **Credentials:** browser sessions are `HttpOnly` cookies valid 30 days (`vs_` tokens, also accepted as Bearer). API tokens (`velo_` prefix) are for the CLI and MCP. Only SHA-256 hashes are stored; passwords use bcrypt, minimum 6 characters.
+- **Credentials:** browser sessions are `HttpOnly`, `SameSite=Lax` cookies valid 30 days, `Secure` when the request came over HTTPS (TLS, or `X-Forwarded-Proto: https` with `--trust-proxy`) (`vs_` tokens, also accepted as Bearer). API tokens (`velo_` prefix) are for the CLI and MCP. Only SHA-256 hashes are stored; passwords use bcrypt, minimum 6 characters.
 - **Password change:** a user changes their own password with the current one. Their other sessions are signed out; the current one stays.
 - **Admin actions:** reset a user's password (signs out all their sessions), change role, disable or enable, delete.
 - **Disable:** login, sessions and API tokens stop working at once, and sessions are deleted. Tokens come back if the user is enabled again. History stays intact.
 - **Delete:** only for users with no history (created issues, comments, activity, uploads). Otherwise the API answers 409 and the admin disables instead.
 - **Guards:** an admin cannot change or delete their own account through these endpoints, and the last enabled admin cannot be demoted, disabled or deleted.
-- **Login throttling:** after 5 failed logins within 15 minutes from one client IP or for one email, further attempts (even correct ones) get 429 with `Retry-After` until 15 minutes after the first failure. A successful login clears the email's counter. Counters live in memory. The IP is the TCP peer, so behind a reverse proxy all clients share one counter.
+- **Login throttling:** after 5 failed logins within 15 minutes from one client IP or for one email, further attempts (even correct ones) get 429 with `Retry-After` until 15 minutes after the first failure. A successful login clears the email's counter. Counters live in memory. The IP is the TCP peer, or with `--trust-proxy` the last address in `X-Forwarded-For`.
+- **Reverse proxy (`velo serve --trust-proxy`, or `VELO_TRUST_PROXY=1` or `true`):** off by default, because any client can send forwarding headers. Decision (gap 10): with it, `X-Forwarded-Proto: https` makes the session cookie `Secure`, and login throttling keys on the last `X-Forwarded-For` address, the one the proxy appended; earlier addresses come from the client and are ignored. For both headers the last header line counts; an address may carry a port, brackets or an IPv6 zone, and one that does not parse falls back to the TCP peer. This assumes exactly one proxy in front of Velo; behind a chain (CDN, then nginx) the counted IP is the inner proxy's.
 
 ### API token scopes
 
@@ -91,7 +92,6 @@ Each event belongs to a project (user events to none); a project-restricted toke
 
 Places where the code falls short of this spec or of the rules in [CONTRIBUTING.md](./CONTRIBUTING.md). Each is small; fix it test-first (the "Done when" line is the test), then delete the entry in the same PR. Last reviewed at commit `ceaf004` on 2026-11-26.
 
-10. **Session cookie is never `Secure`.** Behind an HTTPS proxy the cookie still travels over plain HTTP if a user opens an `http://` URL. Fix: set `Secure` when the request came over TLS, or carries `X-Forwarded-Proto: https` and the server runs with an opt-in `--trust-proxy` flag; with that flag, login throttling also uses `X-Forwarded-For`. The flag name and behavior need a decision recorded here first. Done when: server tests cover both headers with and without the flag.
 11. **Version strings disagree.** `cli.Version` and the MCP `serverInfo` say `0.2.0` while migrations mention v0.3. Fix: one `Version` constant, set at build time with `-ldflags -X` in the Makefile, Dockerfile and release workflow, used by both. Done when: `velo version` and MCP `initialize` print the same tag.
 
 ## Next
