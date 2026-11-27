@@ -18,6 +18,7 @@ import (
 type table struct {
 	cols map[string][]int // lower-cased header -> column indexes, in order
 	rows [][]string
+	num  []int // each row's number in the file, the header being row 1
 }
 
 func readTable(r io.Reader, required ...string) (*table, error) {
@@ -39,9 +40,10 @@ func readTable(r io.Reader, required ...string) (*table, error) {
 		return nil, fmt.Errorf("the file looks separated by semicolons; export it as CSV with commas")
 	}
 	t := &table{cols: map[string][]int{}}
-	for _, row := range records[1:] {
+	for i, row := range records[1:] {
 		if strings.TrimSpace(strings.Join(row, "")) != "" { // spreadsheets leave rows of empty cells
 			t.rows = append(t.rows, row)
+			t.num = append(t.num, i+2)
 		}
 	}
 	for i, name := range records[0] {

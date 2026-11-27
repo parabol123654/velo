@@ -113,10 +113,14 @@ func TestJiraReviewFindings(t *testing.T) {
 		t.Fatalf("mapped: %+v", two)
 	}
 	all := strings.Join(warnings, "\n")
-	for _, want := range []string{`Created`, `"02/Mär/24 10:00"`, `unknown priorities: "P1"`, `--state-map NOSUCH`} {
+	for _, want := range []string{`Created`, `"02/Mär/24 10:00"`, `unknown priorities: "P1"`, `--state-map nosuch=X`} {
 		if !strings.Contains(all, want) {
 			t.Errorf("warnings lack %q:\n%s", want, all)
 		}
+	}
+	// Row numbers are the file's, empty rows included.
+	if _, _, err := (&JiraCSV{}).Batch(strings.NewReader("Summary,Issue key\nA,WEB-1\n,\nB,\n")); err == nil || !strings.Contains(err.Error(), "row 4 has no issue key") {
+		t.Fatalf("row number: %v", err)
 	}
 	if _, _, err := (&JiraCSV{}).Batch(strings.NewReader("Summary;Issue key\nA;WEB-1\n")); err == nil || !strings.Contains(err.Error(), "semicolons") {
 		t.Fatalf("semicolon file: %v", err)

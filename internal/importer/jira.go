@@ -3,6 +3,7 @@ package importer
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/parabol123654/velo/internal/db"
@@ -41,7 +42,7 @@ func (j *JiraCSV) Batch(r io.Reader) (*db.ImportBatch, []string, error) {
 	for n, row := range t.rows {
 		key := t.get(row, "Issue key")
 		if key == "" {
-			return nil, nil, fmt.Errorf("row %d has no issue key", n+2)
+			return nil, nil, fmt.Errorf("row %d has no issue key", t.num[n])
 		}
 		it := db.ImportIssue{
 			ExternalID:  key,
@@ -86,10 +87,15 @@ func (j *JiraCSV) Batch(r io.Reader) (*db.ImportBatch, []string, error) {
 		b.Links = append(b.Links, jiraLinks(t, row, key)...)
 	}
 	w.unknownPriorities(unknownPriority)
-	for status, state := range j.StateMap {
+	var unused []string
+	for status := range j.StateMap {
 		if !usedMap[status] {
-			w.add("map "+status, fmt.Sprintf("--state-map %s=%s: no issue in the file has that status", strings.ToUpper(status), state))
+			unused = append(unused, status)
 		}
+	}
+	sort.Strings(unused)
+	for _, status := range unused {
+		w.add("map "+status, fmt.Sprintf("--state-map %s=%s: no issue in the file has that status", status, j.StateMap[status]))
 	}
 	return b, append(w.list, keepInside(b)...), nil
 }
