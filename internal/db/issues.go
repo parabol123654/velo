@@ -532,12 +532,23 @@ func (s *Store) applyIssuePatch(tx *sql.Tx, actorID string, cur *Issue, patch Up
 			parentID = ""
 		} else {
 			var resolvedParent string
-			var parentProj string
-			if err := tx.QueryRow(`SELECT id, project_id FROM issues WHERE id = ? OR identifier = ? COLLATE NOCASE`, rawParent, rawParent).Scan(&resolvedParent, &parentProj); err != nil {
+			var parentProj, parentIdent string
+			if err := tx.QueryRow(`SELECT id, project_id, identifier FROM issues WHERE id = ? OR identifier = ? COLLATE NOCASE`, rawParent, rawParent).Scan(&resolvedParent, &parentProj, &parentIdent); err != nil {
 				return fmt.Errorf("%w: parent issue not found", ErrValidation)
 			}
 			if resolvedParent == cur.ID || parentProj != cur.ProjectID {
 				return fmt.Errorf("%w: invalid parent issue", ErrValidation)
+			}
+			// Walk up from the new parent; meeting this issue means a loop.
+			// seen guards against a loop already in older data.
+			for up, seen := resolvedParent, map[string]bool{}; up != "" && !seen[up]; {
+				if up == cur.ID {
+					return fmt.Errorf("%w: parent %s is under %s, which would make a loop", ErrValidation, parentIdent, cur.Identifier)
+				}
+				seen[up] = true
+				if err := tx.QueryRow(`SELECT COALESCE(parent_id, '') FROM issues WHERE id = ?`, up).Scan(&up); err != nil {
+					return err
+				}
 			}
 			parentID = resolvedParent
 		}
