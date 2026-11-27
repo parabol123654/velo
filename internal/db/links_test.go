@@ -84,7 +84,7 @@ func TestIssueLinks(t *testing.T) {
 	if _, _, err := st.UnlinkIssues(admin.ID, "DEV-3", "DEV-1"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unlink twice: %v", err)
 	}
-	if err := st.DeleteIssue("DEV-1"); err != nil {
+	if _, err := st.DeleteIssue("DEV-1"); err != nil {
 		t.Fatal(err)
 	}
 	if two, _ := st.GetIssue("DEV-2"); len(two.Links) != 0 {

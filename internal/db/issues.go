@@ -137,6 +137,9 @@ func (s *Store) CreateIssue(actorID string, in CreateIssueInput) (*Issue, error)
 	if err := setLabels(tx, proj.ID, issueID, in.LabelIDs); err != nil {
 		return nil, err
 	}
+	if err := linkAttachments(tx, actorID, issueID, in.Description); err != nil {
+		return nil, err
+	}
 
 	_, err = tx.Exec(
 		`INSERT INTO activities (id, issue_id, actor_id, action, via, created_at) VALUES (?, ?, ?, 'created', ?, ?)`,
@@ -476,6 +479,9 @@ func (s *Store) applyIssuePatch(tx *sql.Tx, actorID string, cur *Issue, patch Up
 	desc := cur.Description
 	if patch.Description != nil {
 		desc = *patch.Description
+		if err := linkAttachments(tx, actorID, cur.ID, desc); err != nil {
+			return err
+		}
 		// Field only: copying the text into history would double its size.
 		if desc != cur.Description {
 			if _, err := tx.Exec(
@@ -611,13 +617,26 @@ func (s *Store) applyIssuePatch(tx *sql.Tx, actorID string, cur *Issue, patch Up
 	return nil
 }
 
-func (s *Store) DeleteIssue(ref string) error {
+// DeleteIssue deletes an issue with its comments and attachments. It returns
+// the storage names of the deleted attachments; the caller removes the files.
+func (s *Store) DeleteIssue(ref string) ([]string, error) {
 	cur, err := s.GetIssue(ref)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = s.db.Exec(`DELETE FROM issues WHERE id = ?`, cur.ID)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	gone, err := releaseAttachments(tx, cur.ProjectID, "id = ?", cur.ID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`DELETE FROM issues WHERE id = ?`, cur.ID); err != nil {
+		return nil, err
+	}
+	return gone, tx.Commit()
 }
 
 func (s *Store) AddComment(authorID, issueRef, body string) (*Comment, error) {
@@ -636,6 +655,9 @@ func (s *Store) AddComment(authorID, issueRef, body string) (*Comment, error) {
 		id, iss.ID, authorID, body, s.via, now, now,
 	)
 	if err != nil {
+		return nil, err
+	}
+	if err := linkAttachments(s.db, authorID, iss.ID, body); err != nil {
 		return nil, err
 	}
 	_, _ = s.db.Exec(`UPDATE issues SET updated_at = ? WHERE id = ?`, now, iss.ID)
@@ -770,10 +792,14 @@ func (s *Store) UpdateComment(actor *User, id, body string) (*Comment, error) {
 	if body == "" {
 		return nil, fmt.Errorf("%w: comment body is required", ErrValidation)
 	}
-	if _, err := s.ownComment(actor, id); err != nil {
+	cm, err := s.ownComment(actor, id)
+	if err != nil {
 		return nil, err
 	}
 	if _, err := s.db.Exec(`UPDATE comments SET body = ?, updated_at = ? WHERE id = ?`, body, nowUTC(), id); err != nil {
+		return nil, err
+	}
+	if err := linkAttachments(s.db, actor.ID, cm.IssueID, body); err != nil {
 		return nil, err
 	}
 	return s.getComment(id)
@@ -830,7 +856,8 @@ func resolveCycle(q rowQuerier, projectID, raw string) (id, name string, err err
 
 // ProjectIDOf returns the project that owns an object, for API token checks.
 // kind is one of state, label, cycle, comment, attachment. An attachment not
-// yet linked to an issue returns "" (its unguessable URL is the capability).
+// linked to an issue returns ""; the serve handler limits those to their
+// uploader and admins.
 func (s *Store) ProjectIDOf(kind, id string) (string, error) {
 	queries := map[string]string{
 		"state":      `SELECT project_id FROM workflow_states WHERE id = ?`,

@@ -387,17 +387,27 @@ func (s *Store) UpdateProject(ref, name, description string) (*Project, error) {
 	return s.GetProject(p.ID)
 }
 
-// DeleteProject removes a project with all its issues, comments, states,
-// labels and cycles. Uploaded files stay on disk.
-func (s *Store) DeleteProject(ref string) (*Project, error) {
+// DeleteProject deletes a project with all its issues, comments, states,
+// labels, cycles and attachments. It returns the storage names of the deleted
+// attachments; the caller removes the files.
+func (s *Store) DeleteProject(ref string) (*Project, []string, error) {
 	p, err := s.GetProject(ref)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if _, err := s.db.Exec(`DELETE FROM projects WHERE id = ?`, p.ID); err != nil {
-		return nil, err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, nil, err
 	}
-	return p, nil
+	defer tx.Rollback()
+	gone, err := releaseAttachments(tx, p.ID, "project_id = ?", p.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := tx.Exec(`DELETE FROM projects WHERE id = ?`, p.ID); err != nil {
+		return nil, nil, err
+	}
+	return p, gone, tx.Commit()
 }
 
 // DeleteCycle removes a cycle; its issues stay, with no cycle.

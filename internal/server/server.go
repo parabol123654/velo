@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"mime"
 	"net/http"
 	"os"
@@ -907,10 +908,12 @@ func (s *Server) handleDeleteIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	blocked, _ := s.store.BlockedIssueIDs(iss.ID)
-	if err := s.store.DeleteIssue(iss.ID); err != nil {
+	gone, err := s.store.DeleteIssue(iss.ID)
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
+	s.removeUploads(gone)
 	defer s.publishIssues(blocked...)
 	s.hub.Broadcast("issue.deleted", iss.ProjectID, map[string]string{"id": iss.ID, "identifier": iss.Identifier})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -993,11 +996,12 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
-	p, err := s.store.DeleteProject(r.PathValue("ref"))
+	p, gone, err := s.store.DeleteProject(r.PathValue("ref"))
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
+	s.removeUploads(gone)
 	s.hub.Broadcast("project.deleted", p.ID, map[string]string{"id": p.ID, "key": p.Key})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -1049,8 +1053,19 @@ func sanitizeFilename(name string) string {
 		}
 	}
 	out := sb.String()
-	if out == "" {
+	// Only dots ("..") would make a URL the router cleans away.
+	if strings.Trim(out, ".") == "" {
 		return "upload.bin"
+	}
+	// The storage name adds 25 bytes; keep it well under the usual 255-byte
+	// file name limit. out is ASCII, so cutting bytes is safe.
+	const maxName = 100
+	if len(out) > maxName {
+		ext := filepath.Ext(out)
+		if len(ext) > 16 {
+			ext = ""
+		}
+		out = out[:maxName-len(ext)] + ext
 	}
 	return out
 }
@@ -1132,6 +1147,15 @@ func (s *Server) handleServeAttachment(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+	// An upload no issue owns yet (or anymore) belongs to no project: only its
+	// uploader and admins see it, and never through a project-restricted token.
+	if att.IssueID == "" {
+		u, t := currentUser(r), currentToken(r)
+		if (t != nil && t.Restricted()) || (u.ID != att.UploaderID && u.Role != "admin") {
+			writeErr(w, db.ErrNotFound)
+			return
+		}
 	}
 	fullPath := filepath.Join(s.uploadsDir, att.StorageName)
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'")
@@ -1279,4 +1303,14 @@ func (s *Server) handleCheckItem(w http.ResponseWriter, r *http.Request) {
 	}
 	s.hub.Broadcast("issue.updated", iss.ProjectID, iss)
 	writeJSON(w, http.StatusOK, iss)
+}
+
+// removeUploads deletes the files of attachments the store has deleted. A file
+// that cannot be removed is only logged: it has no row, so nothing serves it.
+func (s *Server) removeUploads(storageNames []string) {
+	for _, name := range storageNames {
+		if err := os.Remove(filepath.Join(s.uploadsDir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			log.Printf("remove upload %s: %v", name, err)
+		}
+	}
 }

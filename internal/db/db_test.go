@@ -277,7 +277,7 @@ func TestTokenScopeStore(t *testing.T) {
 		t.Fatalf("scoped token: %+v %v", meta, err)
 	}
 	// Deleting the project must not turn the token into an unrestricted one.
-	if _, err := st.DeleteProject(p.ID); err != nil {
+	if _, _, err := st.DeleteProject(p.ID); err != nil {
 		t.Fatal(err)
 	}
 	_, tok, err := st.GetUserByAPIToken(raw)
