@@ -30,11 +30,13 @@ CGO_ENABLED=1 go test -race ./...
 
 ## code-reviewer
 
-<!-- Verdict (APPROVED is required to merge), and each Medium finding left open with the reason. -->
+<!-- Verdict: APPROVED (required to merge), and each Medium finding left open with the reason.
+     Small changes (see CLAUDE.md) or no Claude Code: "n/a: maintainer review". -->
 
 ## qa-tester
 
-<!-- Verdict (QA PASS or QA FAIL), scenarios tried, tests added. -->
+<!-- Verdict (QA PASS or QA FAIL), scenarios tried, tests added.
+     Small changes (see CLAUDE.md) or no Claude Code: "n/a: maintainer review". -->
 
 ## Docs
 

@@ -29,10 +29,15 @@ jobs:
       - name: Agent and skill frontmatter
         run: |
           status=0
+          checked=0
           for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do
             [ -e "$f" ] || continue
+            checked=$((checked + 1))
             if [ "$(head -n 1 "$f")" != "---" ]; then
               echo "$f: must start with ---"; status=1; continue
+            fi
+            if [ "$(grep -c '^---$' "$f")" -lt 2 ]; then
+              echo "$f: frontmatter has no closing ---"; status=1; continue
             fi
             front="$(awk 'NR == 1 { next } /^---$/ { exit } { print }' "$f")"
             for key in name description; do
@@ -41,6 +46,9 @@ jobs:
               fi
             done
           done
+          if [ "$checked" -eq 0 ]; then
+            echo "no agent or skill files found; did .claude/ move?"; status=1
+          fi
           exit $status
 
   # The race detector needs cgo. Release binaries are still built with CGO_ENABLED=0.
