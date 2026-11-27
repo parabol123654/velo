@@ -40,6 +40,7 @@ import { IssueDrawer } from './components/IssueDrawer';
 import { MarkdownEditor } from './components/Markdown';
 import { SettingsModal } from './components/SettingsModal';
 import { applyEvent, LiveEvent } from './live';
+import { dropPosition } from './board';
 
 type ViewMode = 'board' | 'list' | 'backlog' | 'cycles';
 
@@ -422,21 +423,13 @@ export function App() {
     setIssues(applyEvent(issuesRef.current, { type: 'issue.created', payload: created }, projectIdRef.current).issues);
   };
 
-  const handleDropOnColumn = async (issueIdent: string, targetStateId: string, targetIndex?: number) => {
-    const colIssues = filteredIssues
-      .filter((i) => i.state_id === targetStateId && i.identifier !== issueIdent)
-      .sort((a, b) => a.position - b.position);
-
-    let newPos = 1000;
-    if (colIssues.length > 0) {
-      if (targetIndex === undefined || targetIndex >= colIssues.length) {
-        newPos = colIssues[colIssues.length - 1].position + 1000;
-      } else if (targetIndex === 0) {
-        newPos = colIssues[0].position / 2;
-      } else {
-        newPos = (colIssues[targetIndex - 1].position + colIssues[targetIndex].position) / 2;
-      }
-    }
+  // Dropped on a card (targetIdent): it takes that card's place; on the column: last.
+  const handleDropOnColumn = async (issueIdent: string, targetStateId: string, targetIdent?: string) => {
+    const newPos = dropPosition(
+      filteredIssues.filter((i) => i.state_id === targetStateId),
+      issueIdent,
+      targetIdent
+    );
 
     // Optimistic update
     const targetState = states.find((s) => s.id === targetStateId);
@@ -773,6 +766,8 @@ export function App() {
                     return (
                       <div
                         key={st.id}
+                        role="region"
+                        aria-label={`${st.name} column`}
                         onDragOver={(e) => e.preventDefault()}
                         onDrop={(e) => {
                           e.preventDefault();
@@ -799,7 +794,7 @@ export function App() {
                         </div>
 
                         <div className="flex-1 overflow-y-auto px-2.5 pb-2.5 space-y-2">
-                          {colIssues.map((iss, idx) => {
+                          {colIssues.map((iss) => {
                             const prio = getPriorityMeta(iss.priority);
                             return (
                               <div
@@ -814,7 +809,7 @@ export function App() {
                                   e.stopPropagation();
                                   const ident = e.dataTransfer.getData('text/plain');
                                   if (ident && ident !== iss.identifier) {
-                                    void handleDropOnColumn(ident, st.id, idx);
+                                    void handleDropOnColumn(ident, st.id, iss.identifier);
                                   }
                                 }}
                                 onClick={() => setSelectedIssueRef(iss.identifier)}
