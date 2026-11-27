@@ -302,3 +302,19 @@ func mustProjectID(t *testing.T, st *db.Store, key string) string {
 	}
 	return p.ID
 }
+
+func TestMCPUnknownLabels(t *testing.T) {
+	api, _ := newMCPTestAPI(t, "Existing")
+	if _, err := dispatchTool(api, "create_issue", map[string]any{"project": "VELO", "title": "x", "labels": []any{"bug", "nope"}}); err == nil || !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("create_issue with unknown label: want error naming it, got %v", err)
+	}
+	if text, _ := dispatchTool(api, "list_issues", map[string]any{"project": "VELO"}); strings.Contains(text, `"x"`) {
+		t.Fatalf("refused create stored an issue: %s", text)
+	}
+	if _, err := dispatchTool(api, "update_issue", map[string]any{"ref": "VELO-1", "title": "changed", "labels": []any{"nope"}}); err == nil || !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("update_issue with unknown label: want error naming it, got %v", err)
+	}
+	if text, _ := dispatchTool(api, "get_issue", map[string]any{"ref": "VELO-1"}); !strings.Contains(text, "Existing") {
+		t.Fatalf("refused update changed the issue: %s", text)
+	}
+}
