@@ -35,7 +35,7 @@ Open http://localhost:8080 and create the admin account.
 With Docker:
 
 ```bash
-docker build -t velo .
+docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t velo .
 docker run -d -p 8080:8080 -v "$(pwd)/data:/data" velo
 ```
 

@@ -13,7 +13,10 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . ./
 COPY --from=web-builder /src/web/dist ./web/dist
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/velo ./cmd/velo
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X github.com/parabol123654/velo/internal/version.Version=${VERSION}" \
+    -o /out/velo ./cmd/velo
 
 # Stage 3: Minimal Runtime
 FROM alpine:3.21

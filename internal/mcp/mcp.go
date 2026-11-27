@@ -9,6 +9,7 @@ import (
 
 	"github.com/parabol123654/velo/internal/client"
 	"github.com/parabol123654/velo/internal/db"
+	"github.com/parabol123654/velo/internal/version"
 )
 
 type rpcRequest struct {
@@ -81,7 +82,7 @@ func handleRequest(req rpcRequest, api *client.Client) rpcResponse {
 				},
 				"serverInfo": map[string]any{
 					"name":    "velo-mcp",
-					"version": "0.2.0",
+					"version": version.Version,
 				},
 			},
 		}
