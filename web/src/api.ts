@@ -259,7 +259,8 @@ export const api = {
     }),
   updateCycle: (
     id: string,
-    payload: { name: string; description: string; start_date: string; end_date: string; status: string }
+    // Only the fields sent change.
+    payload: Partial<{ name: string; description: string; start_date: string; end_date: string; status: string }>
   ) =>
     req<Cycle>(`/api/cycles/${id}`, {
       method: 'PATCH',

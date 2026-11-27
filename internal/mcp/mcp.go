@@ -377,6 +377,30 @@ func dispatchTool(api *client.Client, name string, args map[string]any) (string,
 		}
 		return toPrettyJSON(cy), nil
 
+	case "update_cycle":
+		cy, err := api.FindCycle(strArg(args, "project"), strArg(args, "cycle"))
+		if err != nil {
+			return "", err
+		}
+		var patch db.UpdateCycleInput
+		for key, field := range map[string]**string{
+			"name": &patch.Name, "description": &patch.Description,
+			"start_date": &patch.StartDate, "end_date": &patch.EndDate, "status": &patch.Status,
+		} {
+			if v, ok := args[key]; ok && v != nil { // null means "keep", as over HTTP
+				s := strArg(args, key)
+				*field = &s
+			}
+		}
+		if patch == (db.UpdateCycleInput{}) {
+			return "", fmt.Errorf("nothing to change: pass name, description, start_date, end_date or status")
+		}
+		updated, err := api.UpdateCycle(cy.ID, patch)
+		if err != nil {
+			return "", err
+		}
+		return toPrettyJSON(updated), nil
+
 	case "next_issue":
 		iss, err := api.NextIssue(strArg(args, "project"), strArg(args, "label"))
 		if err != nil {
@@ -588,6 +612,23 @@ func toolDefinitions() []map[string]any {
 					"status":     map[string]any{"type": "string", "description": "active (default), upcoming, or completed"},
 				},
 				"required": []string{"project", "name"},
+			},
+		},
+		{
+			"name":        "update_cycle",
+			"description": "Change a cycle (sprint), e.g. mark it active or completed. Only the fields you pass change; omit a field (or send null) to keep its value. Pass an empty string to clear the description or a date.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"project":     map[string]any{"type": "string", "description": "Project key (e.g. DEV)"},
+					"cycle":       map[string]any{"type": "string", "description": "Cycle name (any case) or ID"},
+					"name":        map[string]any{"type": "string", "description": "New name"},
+					"description": map[string]any{"type": "string", "description": "New description; empty clears it"},
+					"start_date":  map[string]any{"type": "string", "description": "YYYY-MM-DD"},
+					"end_date":    map[string]any{"type": "string", "description": "YYYY-MM-DD"},
+					"status":      map[string]any{"type": "string", "description": "upcoming, active or completed"},
+				},
+				"required": []string{"project", "cycle"},
 			},
 		},
 		{

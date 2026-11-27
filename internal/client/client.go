@@ -274,6 +274,40 @@ func (c *Client) CreateCycle(project, name, startDate, endDate, status string) (
 	return &out, err
 }
 
+// UpdateCycle changes the fields set in patch; the others stay as they are.
+func (c *Client) UpdateCycle(id string, patch db.UpdateCycleInput) (*db.Cycle, error) {
+	var out db.Cycle
+	err := c.do("PATCH", "/api/cycles/"+url.PathEscape(id), patch, &out)
+	return &out, err
+}
+
+// FindCycle returns the cycle of project whose ID is ref or whose name is ref
+// (any case). A name shared by several cycles is an error: use the ID.
+func (c *Client) FindCycle(project, ref string) (*db.Cycle, error) {
+	var cycles []db.Cycle
+	if err := c.do("GET", "/api/projects/"+url.PathEscape(project)+"/cycles", nil, &cycles); err != nil {
+		return nil, err
+	}
+	ref = strings.TrimSpace(ref)
+	var found []db.Cycle
+	for _, cy := range cycles {
+		if cy.ID == ref {
+			return &cy, nil
+		}
+		if strings.EqualFold(cy.Name, ref) {
+			found = append(found, cy)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return nil, fmt.Errorf("no cycle %q in project %s", ref, project)
+	case 1:
+		return &found[0], nil
+	default:
+		return nil, fmt.Errorf("%d cycles in project %s are named %q; use the cycle ID", len(found), project, ref)
+	}
+}
+
 // ExportProject returns the project as Markdown ("markdown") or a JSON bundle ("json").
 func (c *Client) ExportProject(ref, format string) ([]byte, error) {
 	return c.doRaw("GET", "/api/projects/"+url.PathEscape(ref)+"/export?format="+url.QueryEscape(format), nil)
