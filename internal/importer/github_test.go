@@ -57,7 +57,7 @@ func fakeGitHub(t *testing.T) (*httptest.Server, *[]string) {
 func TestGitHubBatch(t *testing.T) {
 	ts, auth := fakeGitHub(t)
 	g := &GitHub{APIURL: ts.URL, Token: "gh-secret", Users: map[string]string{"bob": "bob@velo.dev"}}
-	b, err := g.Batch("o/r")
+	b, err := g.Batch("O/R") // external IDs use the lower-case name, whatever was typed
 	if err != nil {
 		t.Fatal(err)
 	}

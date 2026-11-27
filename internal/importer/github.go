@@ -73,12 +73,13 @@ func (g *GitHub) Batch(repo string) (*db.ImportBatch, error) {
 	if !repoRe.MatchString(repo) {
 		return nil, fmt.Errorf("repository must be OWNER/NAME, got %q", repo)
 	}
+	repo = strings.ToLower(repo) // GitHub names ignore case; external IDs must not
 	if g.APIURL == "" {
 		g.APIURL = "https://api.github.com"
 	}
 	g.APIURL = strings.TrimRight(g.APIURL, "/")
 	if g.HTTP == nil {
-		g.HTTP = &http.Client{Timeout: time.Minute}
+		g.HTTP = &http.Client{Timeout: time.Minute, CheckRedirect: sameHostRedirect}
 	}
 	base := g.APIURL + "/repos/" + repo
 	b := &db.ImportBatch{Source: "github"}
@@ -170,13 +171,31 @@ func (g *GitHub) Batch(repo string) (*db.ImportBatch, error) {
 		}
 		for _, s := range subs {
 			i, ok := index[s.Number]
-			sameRepo := s.RepoURL == "" || strings.EqualFold(strings.TrimRight(s.RepoURL, "/"), base)
+			// Compare with the parent's own repository URL: the typed name may be
+			// an old name GitHub redirects.
+			parentRepo := gi.RepoURL
+			if parentRepo == "" {
+				parentRepo = base
+			}
+			sameRepo := s.RepoURL == "" || strings.EqualFold(strings.TrimRight(s.RepoURL, "/"), strings.TrimRight(parentRepo, "/"))
 			if ok && sameRepo { // a sub-issue in another repository is left out
 				b.Issues[i].Parent = ext(gi.Number)
 			}
 		}
 	}
 	return b, nil
+}
+
+// sameHostRedirect refuses a redirect to another scheme or host, so the
+// token stays with the API host, as it does for Link pages.
+func sameHostRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return fmt.Errorf("GitHub redirected too many times")
+	}
+	if from := via[0].URL; req.URL.Scheme != from.Scheme || req.URL.Host != from.Host {
+		return fmt.Errorf("GitHub redirected to another host: %s", req.URL.Redacted())
+	}
+	return nil
 }
 
 // pages fetches every page of a GitHub list, following Link: rel="next".
@@ -255,7 +274,7 @@ func githubError(resp *http.Response, raw []byte, repo string, hasToken bool) er
 			reset = "at " + time.Unix(sec, 0).Format("15:04")
 		}
 		if hasToken {
-			return fmt.Errorf("GitHub rate limit reached; it resets %s. Run the import again then: what is imported is skipped", reset)
+			return fmt.Errorf("GitHub rate limit reached before anything was imported; it resets %s, then run the import again", reset)
 		}
 		return fmt.Errorf("GitHub rate limit reached; it resets %s. Without a token GitHub allows 60 requests an hour: %s", reset, tokenHint)
 	case resp.StatusCode == http.StatusNotFound:

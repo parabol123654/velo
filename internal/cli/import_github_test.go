@@ -53,7 +53,7 @@ func TestImportGitHubCommand(t *testing.T) {
 			return Run(append([]string{"import", "github", "o/r", "--github-api", gh.URL, "--url", proxy.URL, "--token", tok}, args...))
 		})
 	}
-	out, err := run("--project", "DEV", "--map-user", "@bob=bob@velo.dev")
+	out, err := run("--project", "DEV", "--map-user", "@bob=bob@velo.dev", "--github-token", "gh-secret")
 	if err != nil || !strings.Contains(out, "Imported 1 issues") {
 		t.Fatalf("import: %q %v", out, err)
 	}
@@ -61,7 +61,7 @@ func TestImportGitHubCommand(t *testing.T) {
 	if err != nil || iss.Title != "Crash" || iss.AssigneeName != "Bob" || !strings.Contains(iss.Description, "Imported from [o/r#7](https://github.com/o/r/issues/7), opened by @alice") {
 		t.Fatalf("DEV-1: %+v %v", iss, err)
 	}
-	if out, err := run("--project", "DEV"); err != nil || !strings.Contains(out, "Imported 0 issues (1 already imported)") {
+	if out, err := run("--project", "DEV", "--github-token", "gh-secret"); err != nil || !strings.Contains(out, "Imported 0 issues (1 already imported)") {
 		t.Fatalf("rerun: %q %v", out, err)
 	}
 	for _, a := range ghAuth {
@@ -72,6 +72,16 @@ func TestImportGitHubCommand(t *testing.T) {
 	for _, a := range veloSeen {
 		if strings.Contains(a, "gh-secret") {
 			t.Fatal("the GitHub token reached Velo")
+		}
+	}
+	// GITHUB_TOKEN is for github.com: another API host gets no token from it.
+	ghAuth = nil
+	if _, err := run("--project", "DEV"); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range ghAuth {
+		if a != "" {
+			t.Fatalf("GITHUB_TOKEN sent to a host other than api.github.com: %q", a)
 		}
 	}
 	if _, err := run(); err == nil || !strings.Contains(err.Error(), "--project is required") {

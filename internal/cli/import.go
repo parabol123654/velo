@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -43,7 +44,7 @@ func runImport(args []string) error {
 
 	case "github":
 		fs, common := importFlags("import github")
-		token := fs.String("github-token", "", "GitHub token (default $GITHUB_TOKEN, then $GH_TOKEN); needed for private repositories and big imports")
+		token := fs.String("github-token", "", "GitHub token; for api.github.com it defaults to $GITHUB_TOKEN, then $GH_TOKEN. Needed for private repositories and big imports")
 		api := fs.String("github-api", "https://api.github.com", "GitHub API URL; for GitHub Enterprise, https://HOST/api/v3")
 		users := userMap{}
 		fs.Var(users, "map-user", "LOGIN=EMAIL: assign LOGIN's issues to the Velo user with EMAIL (repeatable)")
@@ -54,11 +55,12 @@ func runImport(args []string) error {
 		if err := common.check(); err != nil {
 			return err
 		}
-		if *token == "" {
-			*token = os.Getenv("GITHUB_TOKEN")
-		}
-		if *token == "" {
-			*token = os.Getenv("GH_TOKEN")
+		// The environment's token is for github.com: sending it to another
+		// host (GitHub Enterprise, or a typo) needs --github-token.
+		if u, err := url.Parse(*api); *token == "" && err == nil && strings.EqualFold(u.Host, "api.github.com") {
+			if *token = os.Getenv("GITHUB_TOKEN"); *token == "" {
+				*token = os.Getenv("GH_TOKEN")
+			}
 		}
 		fmt.Fprintf(os.Stderr, "Reading %s from GitHub...\n", repo)
 		b, err := (&importer.GitHub{APIURL: *api, Token: *token, Users: users}).Batch(repo)
