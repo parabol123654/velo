@@ -82,6 +82,7 @@ Usage:
   velo project export <KEY> [--format json]     Print project as Markdown (default) or JSON
   velo project import <FILE.json>               Create a project from a JSON export
   velo issue list [--project KEY] [--state ...] List issues (also --assignee, --cycle, --label, --parent, --priority)
+  velo issue list --q 'assignee:me is:open bug' Filter with the query syntax (see velo search)
   velo issue show <KEY-N>                       Show issue details, sub-issues, comments & activity
   velo issue create --project KEY --title ...   Create a new issue (--parent for a sub-issue)
   velo issue update <KEY-N> [--state ...]       Update state, priority, title, desc, assignee, cycle, parent, labels
@@ -96,7 +97,8 @@ Usage:
   velo cycle create --project KEY <NAME>        Create a cycle [--start, --end, --status]
   velo cycle update --project KEY <NAME|ID>     Change only the given --name, --desc, --start, --end, --status
   velo user list                                List users (emails work as --assignee; so does "me")
-  velo search <QUERY>                           Instant FTS5 full-text search
+  velo search <QUERY>                           Search: text plus assignee: state: label: priority: cycle:
+                                                project: parent: is:open|closed|blocked|unblocked has:/no:parent
   velo mcp [--url ...] [--token ...]            Start MCP server over stdio for AI coding agents
   velo backup [--data ./data] <FILE.db>         Copy the database safely, even while serving
   velo uploads prune [--data ./data] [--apply]  List (or with --apply, delete) uploads nothing uses
@@ -358,7 +360,8 @@ func runIssue(args []string) error {
 		project := fs.String("project", "", "Filter by project key (e.g. DEV)")
 		state := fs.String("state", "", "Filter by state name")
 		category := fs.String("category", "", "Filter by category")
-		q := fs.String("q", "", "Search text")
+		q := fs.String("q", "", "Query: filters such as assignee:me is:open label:bug priority:>=3, plus search text")
+		fs.StringVar(q, "query", "", "Same as --q")
 		assignee := fs.String("assignee", "", "Assignee email, \"me\" or \"none\"")
 		cycle := fs.String("cycle", "", "Cycle name or \"none\"")
 		label := fs.String("label", "", "Label name")

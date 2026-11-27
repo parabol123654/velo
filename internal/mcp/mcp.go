@@ -480,7 +480,7 @@ func toolDefinitions() []map[string]any {
 					"state":     map[string]any{"type": "string", "description": "Workflow state name such as Todo or In Progress"},
 					"category":  map[string]any{"type": "string", "description": "backlog, unstarted, started, completed, or canceled"},
 					"priority":  map[string]any{"type": "integer", "description": "0=None, 1=Low, 2=Medium, 3=High, 4=Urgent"},
-					"query":     map[string]any{"type": "string", "description": "Optional FTS5 search text"},
+					"query":     map[string]any{"type": "string", "description": "Optional query: assignee:me|none|<email> state:\"In Progress\" label:bug (repeat for all of several) priority:3|>=high (0-4 or none, low, medium, high, urgent; =, >, >=, <, <=) cycle:\"Sprint 1\"|none project:DEV parent:DEV-1 is:open|closed|blocked|unblocked has:parent no:parent; other words are full-text search. Quote values with spaces, and text containing a colon. An unknown key is an error."},
 					"assignee":  map[string]any{"type": "string", "description": "User email, \"me\", or \"none\" for unassigned"},
 					"cycle":     map[string]any{"type": "string", "description": "Cycle name, or \"none\" for issues without a cycle"},
 					"label":     map[string]any{"type": "string", "description": "Label name"},
@@ -553,11 +553,11 @@ func toolDefinitions() []map[string]any {
 		},
 		{
 			"name":        "search_issues",
-			"description": "Fast SQLite FTS5 full-text search across issue identifiers, titles, and descriptions.",
+			"description": "Search issues across projects: full text over identifiers, titles and descriptions (Vietnamese accents fold), plus filters in the same query syntax as list_issues, e.g. \"assignee:me is:open login\".",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"query": map[string]any{"type": "string", "description": "Keywords or identifier"},
+					"query": map[string]any{"type": "string", "description": "Keywords, an identifier, and/or filters: assignee:me|none|<email> state:\"In Progress\" label:bug (repeat for all of several) priority:3|>=high (0-4 or none, low, medium, high, urgent; =, >, >=, <, <=) cycle:\"Sprint 1\"|none project:DEV parent:DEV-1 is:open|closed|blocked|unblocked has:parent no:parent; other words are full-text search. Quote values with spaces, and text containing a colon. An unknown key is an error."},
 					"limit": map[string]any{"type": "integer", "description": "Max results (default 20)"},
 				},
 				"required": []string{"query"},

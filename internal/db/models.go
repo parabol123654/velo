@@ -219,10 +219,14 @@ type IssueFilter struct {
 	CycleID       string // ID or name, or "none" for issues without a cycle
 	AssigneeID    string // ID or email, or "none"; the HTTP layer maps "me" to the caller
 	Priority      *int
-	ParentID      string // "root" for top-level only, ID or identifier, or "" for all
+	PriorityOp    string // how Priority compares: "=" (also ""), ">", ">=", "<", "<="
+	ParentID      string // "root" for top-level only, "any" for sub-issues only, ID or identifier, or "" for all
+	Status        string // "open" (not completed or canceled), "closed", or "" for all
 	Unblocked     bool   // only issues with no unfinished blockers
+	Blocked       bool   // only issues with an unfinished blocker
 	LabelID       string
-	Query         string
+	Labels        []string // issues must have every one of these (ID or name)
+	Query         string   // free text for FTS
 	Limit         int
 }
 

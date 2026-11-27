@@ -804,10 +804,10 @@ func (s *Server) handleImportProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, proj)
 }
 
+// handleSearch runs q in the issue query syntax (db.ParseIssueQuery).
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query().Get("q")
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	res, err := s.store.SearchIssues(q, limit, allowedProjects(r))
+	res, err := s.store.SearchIssuesFor(r.URL.Query().Get("q"), limit, allowedProjects(r), currentUser(r).ID)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -824,24 +824,30 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	limit, _ := strconv.Atoi(qv.Get("limit"))
-	assignee := qv.Get("assignee")
-	if strings.EqualFold(assignee, "me") {
-		assignee = currentUser(r).ID
-	}
-	issues, err := s.store.ListIssues(db.IssueFilter{
+	f := db.IssueFilter{
 		ProjectRef:    qv.Get("project"),
 		StateID:       qv.Get("state"),
 		StateCategory: qv.Get("category"),
 		CycleID:       qv.Get("cycle"),
-		AssigneeID:    assignee,
+		AssigneeID:    qv.Get("assignee"),
 		Priority:      prio,
 		ParentID:      qv.Get("parent"),
 		LabelID:       qv.Get("label"),
 		Unblocked:     qv.Get("unblocked") == "true" || qv.Get("unblocked") == "1",
-		Query:         qv.Get("q"),
 		Limit:         limit,
 		ProjectIDs:    allowedProjects(r),
-	})
+	}
+	// q is the issue query syntax; its filters add to the parameters above.
+	q, err := db.ParseIssueQuery(qv.Get("q"))
+	if err == nil {
+		err = f.Merge(q)
+	}
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	f.ResolveMe(currentUser(r).ID)
+	issues, err := s.store.ListIssues(f)
 	if err != nil {
 		writeErr(w, err)
 		return
