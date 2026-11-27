@@ -16,20 +16,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: make build
+      - run: make check # build, vet, gofmt, Go and web tests
       - name: Build leaves the tree clean
         run: |
           if [ -n "$(git status --porcelain)" ]; then
             echo "The build changed tracked files:"; git status --porcelain; exit 1
-          fi
-      - run: go vet ./...
-      - run: make test
-      - run: cd web && npm test
-      - name: gofmt
-        run: |
-          unformatted="$(gofmt -l $(git ls-files '*.go'))"
-          if [ -n "$unformatted" ]; then
-            echo "Run gofmt -w on:"; echo "$unformatted"; exit 1
           fi
       - name: Agent and skill frontmatter
         run: |
@@ -67,5 +58,38 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: make build-web # tests serve the embedded UI
-      - run: CGO_ENABLED=1 go test -race ./...
+      - run: make race
+
+  # Rules from CONTRIBUTING.md that a script can check.
+  pr-rules:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: "Commit messages follow 'type: summary'"
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          bad="$(git log --no-merges --format=%s "$BASE..$HEAD" \
+            | grep -Ev '^(feat|fix|docs|test|chore|style|ci)(\([a-z0-9-]+\))?: .+' || true)"
+          if [ -n "$bad" ]; then
+            echo "These commits do not follow 'type: summary' (see CONTRIBUTING.md):"
+            echo "$bad"; exit 1
+          fi
+      - name: New dependencies come with a reason
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          git diff --quiet "$BASE" "$HEAD" -- go.mod web/package.json && exit 0
+          # The text under "## Dependencies", without HTML comments and blank lines.
+          reason="$(printf '%s\n' "$BODY" | perl -0pe 's/<!--.*?-->//gs' \
+            | awk '/^## /{f = ($0 ~ /^## Dependencies/); next} f' | grep -v '^[[:space:]]*$' || true)"
+          if [ -z "$reason" ]; then
+            echo "go.mod or web/package.json changed: say under '## Dependencies' in the PR description"
+            echo "what was added or bumped, and why existing code is not enough."; exit 1
+          fi

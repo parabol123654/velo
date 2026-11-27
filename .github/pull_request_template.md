@@ -14,6 +14,10 @@
 
 <!-- Main files and what changed in each. -->
 
+## Dependencies
+
+<!-- Only if go.mod or web/package.json changes: what was added or bumped, and why the standard library or existing code is not enough. CI fails while this is empty. -->
+
 ## Tests added
 
 <!-- Test names, and what each one proves. For a bug: the test that failed before the fix. -->
@@ -23,9 +27,8 @@
 <!-- Paste each command and its real result. Say if a check could not run, and why. -->
 
 ```text
-make build && go vet ./... && make test && (cd web && npm test && npm run build)
-test -z "$(gofmt -l $(git ls-files '*.go'))"
-CGO_ENABLED=1 go test -race ./...
+make check
+make race
 ```
 
 ## code-reviewer

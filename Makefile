@@ -1,4 +1,4 @@
-.PHONY: all build build-web build-go test test-web clean run
+.PHONY: all build build-web build-go test test-web check race clean run
 
 # The release tag, e.g. v0.3.0 (or v0.3.0-4-gabc1234 between tags); "dev" without git.
 # Override with `make VERSION=v0.3.0`; an unrelated VERSION environment variable is ignored.
@@ -20,6 +20,17 @@ test:
 
 test-web:
 	cd web && npm test
+
+# Every check a pull request needs, except race (it needs cgo and a C compiler).
+check: build
+	go vet ./...
+	@unformatted="$$(gofmt -l $$(git ls-files '*.go'))"; \
+	if [ -n "$$unformatted" ]; then echo "Run gofmt -w on:"; echo "$$unformatted"; exit 1; fi
+	CGO_ENABLED=0 go test ./...
+	cd web && npm test
+
+race: build-web
+	CGO_ENABLED=1 go test -race ./...
 
 run: build
 	./velo serve --addr :8080 --data ./data

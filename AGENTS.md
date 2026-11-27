@@ -5,7 +5,7 @@ All human and AI contributors working on `velo` MUST follow the **Karpathy Guide
 1. **Think Before Coding:** Surface assumptions and tradeoffs explicitly. Never hide ambiguity.
 2. **Simplicity First:** Minimum code that solves the problem. Zero speculative abstractions, zero unused configurability, zero heavy ORMs or bloated dependencies. If 200 lines can be 50, rewrite it.
 3. **Surgical Changes:** Touch only what is required for the task. Keep changes traceable and clean up orphans you create.
-4. **Goal-Driven Execution:** Every change must be paired with verifiable automated checks (`go test ./...`, `npm run build`).
+4. **Goal-Driven Execution:** Every change must be paired with verifiable automated checks (`make check`; see CONTRIBUTING.md).
 
 ## Architectural Invariants
 
