@@ -39,6 +39,8 @@ docker build -t velo .
 docker run -d -p 8080:8080 -v "$(pwd)/data:/data" velo
 ```
 
+Behind a reverse proxy that terminates HTTPS (Caddy, nginx), start Velo with `--trust-proxy` (or `VELO_TRUST_PROXY=1` or `true`). Velo then marks the session cookie `Secure` when the proxy sends `X-Forwarded-Proto: https`, and counts failed logins per client using the last `X-Forwarded-For` address. Caddy sets both headers by default; with nginx add `proxy_set_header X-Forwarded-Proto $scheme;` and `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`. Leave the flag off when clients reach Velo directly, since anyone can send these headers; with it on, the proxy must set or append them itself, or clients choose their own throttling key. It assumes one proxy: behind a chain (a CDN, then nginx) the inner proxy's address is the one counted.
+
 ## CLI
 
 Create an API token in Settings, then:

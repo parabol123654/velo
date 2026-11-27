@@ -43,6 +43,10 @@ type Server struct {
 
 	// GitHubWebhookSecret enables POST /api/webhooks/github when non-empty.
 	GitHubWebhookSecret string
+
+	// TrustProxy believes X-Forwarded-Proto and X-Forwarded-For, which only
+	// a reverse proxy in front of Velo should set (velo serve --trust-proxy).
+	TrustProxy bool
 }
 
 func New(store *db.Store, dataDir string, staticFS fs.FS) (*Server, error) {
@@ -162,7 +166,7 @@ func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	})
 }
 
-func setSessionCookie(w http.ResponseWriter, token string, exp time.Time) {
+func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, token string, exp time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    token,
@@ -170,8 +174,23 @@ func setSessionCookie(w http.ResponseWriter, token string, exp time.Time) {
 		Expires:  exp,
 		MaxAge:   int(time.Until(exp).Seconds()),
 		HttpOnly: true,
+		Secure:   s.isHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 	})
+}
+
+// isHTTPS reports whether the browser reached Velo over HTTPS: directly over
+// TLS, or, with TrustProxy, through a proxy that says so.
+func (s *Server) isHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if !s.TrustProxy {
+		return false
+	}
+	// The last line, like X-Forwarded-For: the one the trusted proxy added.
+	v := r.Header.Values("X-Forwarded-Proto")
+	return len(v) > 0 && strings.EqualFold(strings.TrimSpace(v[len(v)-1]), "https")
 }
 
 func (s *Server) routes() {
@@ -279,7 +298,7 @@ func (s *Server) handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	setSessionCookie(w, tok, exp)
+	s.setSessionCookie(w, r, tok, exp)
 	writeJSON(w, http.StatusCreated, map[string]any{"user": u, "session_token": tok})
 }
 
@@ -292,7 +311,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	ipKey, emailKey := loginKeys(r, body.Email)
+	ipKey, emailKey := s.loginKeys(r, body.Email)
 	if wait := s.logins.retryAfter(ipKey, emailKey); wait > 0 {
 		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many failed logins; try again later"})
@@ -312,7 +331,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	setSessionCookie(w, tok, exp)
+	s.setSessionCookie(w, r, tok, exp)
 	writeJSON(w, http.StatusOK, map[string]any{"user": u, "session_token": tok})
 }
 
@@ -326,6 +345,8 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   s.isHTTPS(r),
+		SameSite: http.SameSiteLaxMode,
 	})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -352,7 +373,7 @@ func (s *Server) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.hub.Broadcast("user.created", "", u)
-	setSessionCookie(w, tok, exp)
+	s.setSessionCookie(w, r, tok, exp)
 	writeJSON(w, http.StatusCreated, map[string]any{"user": u, "session_token": tok})
 }
 

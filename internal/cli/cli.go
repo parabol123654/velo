@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -74,6 +75,7 @@ func printUsage() {
 Usage:
   velo serve [--addr :8080] [--data ./data]     Start Web UI, REST API & SSE server
              [--github-secret ...]              Enable GitHub webhook at /api/webhooks/github
+             [--trust-proxy]                    Behind a reverse proxy (HTTPS cookie, client IPs)
   velo login --token <velo_...> [--url ...]     Save API token & server URL to ~/.config/velo/config.json
   velo project list                             List projects
   velo project create <KEY> <NAME> [--desc ...] Create a new project
@@ -108,6 +110,8 @@ func runServe(args []string) error {
 	addr := fs.String("addr", ":8080", "HTTP listen address (e.g. :8080 or 127.0.0.1:8080)")
 	dataDir := fs.String("data", "./data", "Directory for SQLite database and uploads")
 	ghSecret := fs.String("github-secret", os.Getenv("VELO_GITHUB_WEBHOOK_SECRET"), "Secret for GitHub webhooks at /api/webhooks/github (disabled if empty)")
+	envTrust, _ := strconv.ParseBool(os.Getenv("VELO_TRUST_PROXY"))
+	trustProxy := fs.Bool("trust-proxy", envTrust, "Behind a reverse proxy: believe X-Forwarded-Proto (Secure cookie) and X-Forwarded-For (login throttling); also VELO_TRUST_PROXY=1 or true")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -128,6 +132,7 @@ func runServe(args []string) error {
 		return err
 	}
 	srv.GitHubWebhookSecret = *ghSecret
+	srv.TrustProxy = *trustProxy
 
 	httpSrv := &http.Server{
 		Addr:              *addr,
