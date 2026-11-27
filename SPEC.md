@@ -95,7 +95,8 @@ Each event belongs to a project (user events to none); a project-restricted toke
 
 Places where the code falls short of this spec or of the rules in [CONTRIBUTING.md](./CONTRIBUTING.md). Each is small; fix it test-first (the "Done when" line is the test), then delete the entry in the same PR. Last reviewed at commit `ceaf004` on 2026-11-26; gaps 1–11 found then are fixed.
 
-None open.
+1. **JSON import drops cycles it cannot create.** `ImportProjectJSON` ignores `CreateCycle` errors, and an issue whose cycle the bundle does not define is imported with no cycle, silently. Done when: an import whose issues name an unknown cycle, or whose bundle cycle is invalid (empty name, bad status), is a 400 naming it and creates nothing.
+2. **JSON import keeps defaults the source project no longer has.** A source that renamed "Done" to "Shipped" or deleted "In Review" gets both back next to its own states after export and import. Done when: importing a bundle whose states omit a default leaves the new project with exactly the bundle's states (an unused default is removed), and an issue in a removed default is refused before anything is created.
 
 ## Next
 

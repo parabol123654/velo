@@ -70,8 +70,8 @@ func TestQAImportStatesRoundTrip(t *testing.T) {
 
 // A project whose default state "In Review" was moved to the completed
 // category: after export and import, its closed issues must stay closed.
-// The import ignores the bundle's category for names the defaults already
-// have, so the issue reopens (category "started").
+// A bundle state named like a default keeps the bundle's category, so the
+// issue stays closed instead of reopening in the default "started" state.
 func TestQAImportKeepsCategoryOfDefaultNamedState(t *testing.T) {
 	st := newTestStore(t)
 	admin, _ := st.CreateFirstAdmin("admin@velo.local", "Admin", "secret123")

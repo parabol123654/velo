@@ -135,6 +135,9 @@ func (s *Store) ImportProjectJSON(actorID string, b *ExportBundle) (*Project, er
 		known[foldKey(l.name)] = true
 	}
 	for _, l := range b.Labels {
+		if foldKey(l.Name) == "" {
+			return nil, fmt.Errorf("%w: the bundle has a label with no name", ErrValidation)
+		}
 		known[foldKey(l.Name)] = true
 	}
 	var missing []string

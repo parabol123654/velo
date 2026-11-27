@@ -104,3 +104,22 @@ func TestImportMatchesLabelsIgnoringUnicodeCase(t *testing.T) {
 		t.Fatalf("labels: %v", names)
 	}
 }
+
+// A bundle label with no name fails the import before anything is created,
+// as a state with no name does; it used to let an issue label "" through the
+// check and fail halfway.
+func TestImportRejectsEmptyLabelName(t *testing.T) {
+	st := newTestStore(t)
+	admin, _ := st.CreateFirstAdmin("admin@velo.local", "Admin", "secret123")
+	b := &ExportBundle{
+		Project: Project{Key: "IMP", Name: "Imported"},
+		Labels:  []Label{{Name: "  "}},
+		Issues:  []ExportIssue{{Identifier: "OLD-1", Title: "a"}, {Identifier: "OLD-2", Title: "b", Labels: []string{" "}}},
+	}
+	if _, err := st.ImportProjectJSON(admin.ID, b); !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), "label with no name") {
+		t.Fatalf("want validation error about the empty label, got %v", err)
+	}
+	if _, err := st.GetProject("IMP"); err == nil {
+		t.Fatal("refused import created the project")
+	}
+}
