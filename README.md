@@ -10,6 +10,7 @@ Velo covers the parts of Jira most small teams actually use: projects, issues, s
 - Issue keys per project (`DEV-1`, `DEV-2`, ...), sub-issues, labels, priorities, cycles.
 - Board, list and backlog views. Drag and drop on the board.
 - Keyboard shortcuts: `Ctrl/Cmd+K` search, `C` new issue, `J`/`K` to move, `Enter` to open.
+- Filters in one line (`assignee:me is:open label:bug priority:>=high`) on the board and in search, saved per user in the sidebar.
 - Markdown descriptions and comments. Paste screenshots with `Ctrl+V`. Clickable `- [ ]` checklists.
 - Full-text search (SQLite FTS5).
 - Live updates in the browser via Server-Sent Events.

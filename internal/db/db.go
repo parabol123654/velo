@@ -250,6 +250,16 @@ CREATE TABLE IF NOT EXISTS activities (
 );
 CREATE INDEX IF NOT EXISTS idx_activities_issue ON activities(issue_id, created_at);
 
+CREATE TABLE IF NOT EXISTS saved_filters (
+	id         TEXT PRIMARY KEY,
+	user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	name       TEXT NOT NULL,
+	query      TEXT NOT NULL,
+	position   REAL NOT NULL,
+	created_at DATETIME NOT NULL,
+	UNIQUE (user_id, name COLLATE NOCASE)
+);
+
 CREATE TABLE IF NOT EXISTS attachments (
 	id           TEXT PRIMARY KEY,
 	issue_id     TEXT REFERENCES issues(id) ON DELETE SET NULL,

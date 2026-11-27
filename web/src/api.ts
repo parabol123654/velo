@@ -93,6 +93,28 @@ export interface Issue {
   updated_at: string;
 }
 
+// A named issue query of the signed-in user (#17).
+export interface SavedFilter {
+  id: string;
+  name: string;
+  query: string;
+  position: number;
+  created_at: string;
+}
+
+// queryFilterParams builds the /api/issues parameters that find the issues of
+// projectKey matching query (the issue query syntax), or null when the query
+// is blank and nothing should be filtered.
+// A query that names its own project (project:KEY) is sent without the
+// project parameter, which the server would otherwise reject as set twice;
+// the board then shows only the matches that are in its project.
+export function queryFilterParams(projectKey: string, query: string): Record<string, string> | null {
+  const q = query.trim();
+  if (!q) return null;
+  if (/(^|\s)project:/i.test(q)) return { q };
+  return { project: projectKey, q };
+}
+
 export type LinkKind = 'blocks' | 'blocked_by' | 'relates' | 'duplicates' | 'duplicated_by';
 
 export interface IssueLink {
@@ -275,6 +297,13 @@ export const api = {
     return req<Issue[]>(`/api/issues?${qs.toString()}`);
   },
   getIssue: (ref: string) => req<Issue>(`/api/issues/${encodeURIComponent(ref)}`),
+
+  listFilters: () => req<SavedFilter[]>('/api/filters'),
+  createFilter: (name: string, query: string) =>
+    req<SavedFilter>('/api/filters', { method: 'POST', body: JSON.stringify({ name, query }) }),
+  updateFilter: (id: string, patch: Partial<Pick<SavedFilter, 'name' | 'query' | 'position'>>) =>
+    req<SavedFilter>(`/api/filters/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  deleteFilter: (id: string) => req<{ ok: boolean }>(`/api/filters/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   getIssueDetail: (ref: string) =>
     req<{ issue: Issue; comments: Comment[]; activities: Activity[] }>(
       `/api/issues/${encodeURIComponent(ref)}?detail=1`

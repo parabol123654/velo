@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assignableUsers, describeActivity, tokenScopeLabel, User } from './api';
+import { assignableUsers, describeActivity, queryFilterParams, tokenScopeLabel, User } from './api';
 
 const u = (id: string, disabled = false): User => ({
   id,
@@ -43,5 +43,15 @@ describe('describeActivity', () => {
     expect(describeActivity({ action: 'updated', field: 'priority', old_value: 'Low', new_value: 'High' })).toBe(
       'changed priority from "Low" to "High"'
     );
+  });
+});
+
+describe('queryFilterParams', () => {
+  it('scopes the query to the project, and filters nothing for a blank query', () => {
+    expect(queryFilterParams('DEV', '  assignee:me is:open  ')).toEqual({ project: 'DEV', q: 'assignee:me is:open' });
+    expect(queryFilterParams('DEV', '   ')).toBeNull();
+    expect(queryFilterParams('DEV', '')).toBeNull();
+    expect(queryFilterParams('DEV', 'PROJECT:OPS is:open')).toEqual({ q: 'PROJECT:OPS is:open' });
+    expect(queryFilterParams('DEV', 'notproject:x')).toEqual({ project: 'DEV', q: 'notproject:x' });
   });
 });

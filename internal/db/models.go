@@ -190,6 +190,22 @@ type CreateIssueInput struct {
 	LabelIDs    []string `json:"label_ids,omitempty"`
 }
 
+// SavedFilter is a named issue query (ParseIssueQuery syntax) of one user.
+type SavedFilter struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Query     string    `json:"query"`
+	Position  float64   `json:"position"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// SavedFilterInput changes only the fields that are set.
+type SavedFilterInput struct {
+	Name     *string  `json:"name,omitempty"`
+	Query    *string  `json:"query,omitempty"`
+	Position *float64 `json:"position,omitempty"`
+}
+
 // UpdateCycleInput changes only the fields that are set.
 type UpdateCycleInput struct {
 	Name        *string `json:"name,omitempty"`
