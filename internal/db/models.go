@@ -190,6 +190,15 @@ type CreateIssueInput struct {
 	LabelIDs    []string `json:"label_ids,omitempty"`
 }
 
+// UpdateCycleInput changes only the fields that are set.
+type UpdateCycleInput struct {
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	StartDate   *string `json:"start_date,omitempty"`
+	EndDate     *string `json:"end_date,omitempty"`
+	Status      *string `json:"status,omitempty"`
+}
+
 type UpdateIssueInput struct {
 	Title       *string   `json:"title,omitempty"`
 	Description *string   `json:"description,omitempty"`

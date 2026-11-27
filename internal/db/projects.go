@@ -337,9 +337,16 @@ func (s *Store) CreateCycle(projectID, name, description, startDate, endDate, st
 	return c, nil
 }
 
-func (s *Store) UpdateCycle(id, name, description, startDate, endDate, status string) (*Cycle, error) {
+// UpdateCycle changes the fields set in in and keeps the others. It reads
+// and writes in one transaction, so concurrent updates cannot undo each other.
+func (s *Store) UpdateCycle(id string, in UpdateCycleInput) (*Cycle, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
 	var c Cycle
-	err := s.db.QueryRow(
+	err = tx.QueryRow(
 		`SELECT id, project_id, name, description, start_date, end_date, status, created_at FROM cycles WHERE id = ?`, id,
 	).Scan(&c.ID, &c.ProjectID, &c.Name, &c.Description, &c.StartDate, &c.EndDate, &c.Status, &c.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -348,26 +355,40 @@ func (s *Store) UpdateCycle(id, name, description, startDate, endDate, status st
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(name) != "" {
-		c.Name = strings.TrimSpace(name)
-	}
-	c.Description = description
-	c.StartDate = startDate
-	c.EndDate = endDate
-	if status != "" {
-		if status != "upcoming" && status != "active" && status != "completed" {
-			return nil, fmt.Errorf("%w: invalid cycle status", ErrValidation)
+	if in.Name != nil {
+		if c.Name = strings.TrimSpace(*in.Name); c.Name == "" {
+			return nil, fmt.Errorf("%w: cycle name cannot be empty", ErrValidation)
 		}
-		c.Status = status
 	}
-	_, err = s.db.Exec(
+	if in.Description != nil {
+		c.Description = strings.TrimSpace(*in.Description)
+	}
+	if in.StartDate != nil {
+		c.StartDate = strings.TrimSpace(*in.StartDate)
+	}
+	if in.EndDate != nil {
+		c.EndDate = strings.TrimSpace(*in.EndDate)
+	}
+	if in.Status != nil {
+		if st := *in.Status; st != "upcoming" && st != "active" && st != "completed" {
+			return nil, fmt.Errorf("%w: invalid cycle status %q (upcoming, active or completed)", ErrValidation, st)
+		}
+		c.Status = *in.Status
+	}
+	if _, err := tx.Exec(
 		`UPDATE cycles SET name = ?, description = ?, start_date = ?, end_date = ?, status = ? WHERE id = ?`,
 		c.Name, c.Description, c.StartDate, c.EndDate, c.Status, c.ID,
-	)
-	if err != nil {
+	); err != nil {
 		return nil, err
 	}
-	return &c, nil
+	// The same counts ListCycles reports, so the response is complete.
+	if err := tx.QueryRow(`
+		SELECT COUNT(i.id), COALESCE(SUM(CASE WHEN ws.category = 'completed' THEN 1 ELSE 0 END), 0)
+		FROM issues i JOIN workflow_states ws ON ws.id = i.state_id
+		WHERE i.cycle_id = ?`, c.ID).Scan(&c.IssueCount, &c.CompletedCount); err != nil {
+		return nil, err
+	}
+	return &c, tx.Commit()
 }
 
 // UpdateProject renames a project or changes its description. The key is

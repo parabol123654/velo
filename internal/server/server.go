@@ -753,18 +753,12 @@ func (s *Server) handleCreateCycle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateCycle(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		StartDate   string `json:"start_date"`
-		EndDate     string `json:"end_date"`
-		Status      string `json:"status"`
-	}
-	if err := decodeJSON(r, &body); err != nil {
+	var in db.UpdateCycleInput // only the fields in the body change
+	if err := decodeJSON(r, &in); err != nil {
 		writeErr(w, err)
 		return
 	}
-	c, err := s.store.UpdateCycle(r.PathValue("id"), body.Name, body.Description, body.StartDate, body.EndDate, body.Status)
+	c, err := s.store.UpdateCycle(r.PathValue("id"), in)
 	if err != nil {
 		writeErr(w, err)
 		return

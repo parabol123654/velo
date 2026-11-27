@@ -94,6 +94,7 @@ Usage:
   velo issue comment <KEY-N> <BODY>             Add Markdown comment to an issue
   velo label create --project KEY <NAME>        Create a label [--color #hex]
   velo cycle create --project KEY <NAME>        Create a cycle [--start, --end, --status]
+  velo cycle update --project KEY <NAME|ID>     Change only the given --name, --desc, --start, --end, --status
   velo user list                                List users (emails work as --assignee; so does "me")
   velo search <QUERY>                           Instant FTS5 full-text search
   velo mcp [--url ...] [--token ...]            Start MCP server over stdio for AI coding agents
@@ -787,8 +788,11 @@ func runLabel(args []string) error {
 }
 
 func runCycle(args []string) error {
+	if len(args) > 0 && args[0] == "update" {
+		return runCycleUpdate(args[1:])
+	}
 	if len(args) == 0 || args[0] != "create" {
-		return fmt.Errorf("usage: velo cycle create --project KEY <NAME> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--status active|upcoming|completed] (list cycles with: velo project show KEY)")
+		return fmt.Errorf("usage: velo cycle create --project KEY <NAME> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--status active|upcoming|completed]\n       velo cycle update --project KEY <NAME|ID> [--name ...] [--desc ...] [--start ...] [--end ...] [--status ...]\n(list cycles with: velo project show KEY)")
 	}
 	fs := flag.NewFlagSet("cycle create", flag.ContinueOnError)
 	project := fs.String("project", "", "Project key (required)")
@@ -806,6 +810,49 @@ func runCycle(args []string) error {
 		return err
 	}
 	fmt.Printf("Created cycle %s [%s]\n", cy.Name, cy.Status)
+	return nil
+}
+
+// runCycleUpdate changes only the flags given: `velo cycle update --project
+// DEV "Sprint 1" --status completed` keeps the dates and description.
+func runCycleUpdate(args []string) error {
+	fs := flag.NewFlagSet("cycle update", flag.ContinueOnError)
+	project := fs.String("project", "", "Project key (required)")
+	name := fs.String("name", "", "New name")
+	desc := fs.String("desc", "", "Description (empty clears it)")
+	start := fs.String("start", "", "Start date YYYY-MM-DD (empty clears it)")
+	end := fs.String("end", "", "End date YYYY-MM-DD (empty clears it)")
+	status := fs.String("status", "", "upcoming, active or completed")
+	u := fs.String("url", "", "Velo server URL")
+	tok := fs.String("token", "", "API token")
+	ref, err := parseWithName(fs, args)
+	if err != nil {
+		return err
+	}
+	if *project == "" || ref == "" {
+		return fmt.Errorf("usage: velo cycle update --project KEY <NAME|ID> [--name ...] [--desc ...] [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--status upcoming|active|completed]")
+	}
+	var patch db.UpdateCycleInput
+	fields := map[string]**string{"name": &patch.Name, "desc": &patch.Description, "start": &patch.StartDate, "end": &patch.EndDate, "status": &patch.Status}
+	values := map[string]*string{"name": name, "desc": desc, "start": start, "end": end, "status": status}
+	fs.Visit(func(f *flag.Flag) {
+		if field, ok := fields[f.Name]; ok {
+			*field = values[f.Name]
+		}
+	})
+	if patch == (db.UpdateCycleInput{}) {
+		return fmt.Errorf("nothing to change: pass --name, --desc, --start, --end or --status")
+	}
+	api := newAPIClient(*u, *tok)
+	cy, err := api.FindCycle(*project, ref)
+	if err != nil {
+		return err
+	}
+	cy, err = api.UpdateCycle(cy.ID, patch)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Updated cycle %s [%s] %s → %s\n", cy.Name, cy.Status, valueOrDash(cy.StartDate), valueOrDash(cy.EndDate))
 	return nil
 }
 
