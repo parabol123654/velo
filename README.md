@@ -99,6 +99,15 @@ With Docker: `docker exec <container> velo backup --data /data /data/backup.db`.
 
 Do not copy `velo.db` alone while the server runs: recent writes may still be in `velo.db-wal`.
 
+Older versions kept pasted images when their issue or project was deleted. To find and remove uploads nothing uses (files with no record, and uploads no issue or comment links; in both cases only those older than a day):
+
+```bash
+./velo uploads prune --data ./data           # lists what would be deleted
+./velo uploads prune --data ./data --apply   # deletes it; safe while the server runs
+```
+
+With Docker: `docker exec <container> velo uploads prune --data /data`.
+
 ## Agent runner
 
 `velo agent` hands issues to a coding agent on your machine. Add the label `agent` to an issue on the board and the runner picks it up:
