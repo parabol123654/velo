@@ -625,7 +625,7 @@ func toolDefinitions() []map[string]any {
 		},
 		{
 			"name":        "link_issues",
-			"description": "Link two issues in the same project, e.g. DEV-1 blocks DEV-2. Blocked issues show blocked_by_count > 0 until their blockers are done.",
+			"description": "Link two issues in the same project, e.g. DEV-1 blocks DEV-2. Blocked issues show blocked_by_count > 0 until their blockers are done. A blocks link that would close a loop is refused with a conflict naming the existing chain.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{

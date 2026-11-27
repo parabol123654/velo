@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 )
@@ -59,6 +60,16 @@ func (s *Store) LinkIssues(actorID, ref, kind, targetRef string) (string, string
 	}
 	if n > 0 {
 		return "", "", fmt.Errorf("%w: %s and %s are already linked that way", ErrConflict, from.Identifier, to.Identifier)
+	}
+	if k.stored == "blocks" {
+		chain, err := blockChain(tx, dst.ID, src.ID)
+		if err != nil {
+			return "", "", err
+		}
+		if chain != nil {
+			return "", "", fmt.Errorf("%w: %s already blocks %s through %s, so this link would make a loop",
+				ErrConflict, dst.Identifier, src.Identifier, strings.Join(chain, " → "))
+		}
 	}
 	now := nowUTC()
 	if _, err := tx.Exec(
@@ -163,4 +174,50 @@ func (s *Store) BlockedIssueIDs(issueID string) ([]string, error) {
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// blockChain returns the identifiers along a chain of blocks links from
+// "from" to "to" (both included), or nil when "from" does not block "to".
+func blockChain(tx *sql.Tx, from, to string) ([]string, error) {
+	prev := map[string]string{from: ""}
+	queue := []string{from}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if cur == to {
+			var chain []string
+			for id := cur; id != ""; id = prev[id] {
+				var ident string
+				if err := tx.QueryRow(`SELECT identifier FROM issues WHERE id = ?`, id).Scan(&ident); err != nil {
+					return nil, err
+				}
+				chain = append([]string{ident}, chain...)
+			}
+			return chain, nil
+		}
+		rows, err := tx.Query(`SELECT target_id FROM issue_links WHERE kind = 'blocks' AND source_id = ?`, cur)
+		if err != nil {
+			return nil, err
+		}
+		var next []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			next = append(next, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		for _, id := range next {
+			if _, seen := prev[id]; !seen {
+				prev[id] = cur
+				queue = append(queue, id)
+			}
+		}
+	}
+	return nil, nil
 }
