@@ -33,7 +33,13 @@ make build
 
 Open http://localhost:8080 and create the admin account.
 
-With Docker:
+With Docker (images for `linux/amd64` and `linux/arm64`, tagged with each release and `latest`):
+
+```bash
+docker run -d -p 8080:8080 -v "$(pwd)/data:/data" ghcr.io/parabol123654/velo:latest
+```
+
+Options go in environment variables, for example `-e VELO_TRUST_PROXY=1` or `-e VELO_GITHUB_WEBHOOK_SECRET=...`. To build the image yourself:
 
 ```bash
 docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t velo .
