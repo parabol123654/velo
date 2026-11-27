@@ -87,6 +87,9 @@ func TestImportFileCommand(t *testing.T) {
 		{[]string{path, "--project", "NOPE"}, "404"},
 		{[]string{filepath.Join(t.TempDir(), "missing.json"), "--project", "DEV"}, "no such file"},
 		{[]string{writeBatch(t, &db.ImportBatch{Source: "file", Issues: []db.ImportIssue{{ExternalID: "D-1", Title: "a"}, {ExternalID: " D-1", Title: "b"}}}), "--project", "DEV"}, "D-1 appears twice"},
+		{[]string{writeBatch(t, &db.ImportBatch{Source: "file", Issues: []db.ImportIssue{
+			{ExternalID: "E-1", Title: "a", Comments: []db.ImportComment{{ExternalID: "c", Body: "x"}}},
+			{ExternalID: "E-2", Title: "b", Comments: []db.ImportComment{{ExternalID: "c", Body: "y"}}}}}), "--project", "DEV"}, "comment c appears twice"},
 	} {
 		if _, err := run(tc.args...); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Fatalf("%v: want error containing %q, got %v", tc.args, tc.want, err)
@@ -112,7 +115,7 @@ func TestImportSplitsBigBatches(t *testing.T) {
 	}
 	b.Links = []db.ImportLink{{Source: "X-2", Kind: "blocks", Target: fmt.Sprintf("X-%d", n-1)}}
 
-	parts, err := splitImport(b)
+	parts, _, err := splitImport(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +157,7 @@ func TestImportSplitsLinks(t *testing.T) {
 			b.Links = append(b.Links, db.ImportLink{Source: fmt.Sprint(i), Kind: "relates", Target: fmt.Sprint(j)})
 		}
 	}
-	parts, err := splitImport(b)
+	parts, _, err := splitImport(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +165,7 @@ func TestImportSplitsLinks(t *testing.T) {
 		t.Fatalf("parts: %d, links %d", len(parts), len(parts[0].Links))
 	}
 	res, err := sendImport(newAPIClient(url, tok), "DEV", b, false)
-	if err != nil || res.Created != 150 || res.Links != importPartLinks+1 {
+	if err != nil || res.Created != 150 || res.Skipped != 0 || len(res.Issues) != 150 || res.Links != importPartLinks+1 {
 		t.Fatalf("import: %+v %v", res, err)
 	}
 	if n, _ := st.ListIssues(db.IssueFilter{ProjectRef: "DEV"}); len(n) != 150 {

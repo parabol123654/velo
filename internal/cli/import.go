@@ -105,15 +105,22 @@ const (
 func sendImport(c *client.Client, project string, b *db.ImportBatch, dryRun bool) (*db.ImportResult, error) {
 	// The server refuses a repeated ID within a request; across requests the
 	// second copy would look already imported and vanish, so check here.
-	seen := map[string]bool{}
+	seen, seenComment := map[string]bool{}, map[string]bool{}
 	for _, it := range b.Issues {
 		id := strings.TrimSpace(it.ExternalID)
 		if seen[id] {
 			return nil, fmt.Errorf("issue %s appears twice in the import", id)
 		}
 		seen[id] = true
+		for _, c := range it.Comments {
+			cid := strings.TrimSpace(c.ExternalID)
+			if seenComment[cid] {
+				return nil, fmt.Errorf("comment %s appears twice in the import", cid)
+			}
+			seenComment[cid] = true
+		}
 	}
-	parts, err := splitImport(b)
+	parts, linkOnly, err := splitImport(b)
 	if err != nil {
 		return nil, err
 	}
@@ -136,6 +143,10 @@ func sendImport(c *client.Client, project string, b *db.ImportBatch, dryRun bool
 				return nil, fmt.Errorf("request %d of %d failed (the first %d are imported; run again to continue): %w", i+1, len(parts), i, err)
 			}
 			return nil, err
+		}
+		if linkOnly[i] { // its one issue is a copy, sent because a request needs one
+			total.Links += res.Links
+			continue
 		}
 		total.Created += res.Created
 		total.Skipped += res.Skipped
@@ -160,40 +171,47 @@ func sendImport(c *client.Client, project string, b *db.ImportBatch, dryRun bool
 }
 
 // splitImport cuts the batch into requests under the limits: issues (with
-// their comments) first, parents before children, then the links.
-func splitImport(b *db.ImportBatch) ([]*db.ImportBatch, error) {
-	var parts []*db.ImportBatch
+// their comments) first, parents before children, then the links, in the
+// last of those requests while they fit and in requests of their own after
+// it. linkOnly marks those: they repeat one issue, as a request needs one.
+func splitImport(b *db.ImportBatch) (parts []*db.ImportBatch, linkOnly []bool, err error) {
+	cycles, err := json.Marshal(b.Cycles)
+	if err != nil {
+		return nil, nil, err
+	}
+	base := len(cycles) + 1024 // the cycles go with every request; room for the rest
 	cur := &db.ImportBatch{Source: b.Source, Cycles: b.Cycles}
-	size, comments := 0, 0
+	size, comments := base, 0
 	for _, it := range parentsFirst(b.Issues) {
 		raw, err := json.Marshal(it)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if len(cur.Issues) > 0 && (len(cur.Issues) >= importPartIssues || size+len(raw) > importPartBytes || comments+len(it.Comments) > importPartComments) {
-			parts = append(parts, cur)
+			parts, linkOnly = append(parts, cur), append(linkOnly, false)
 			cur = &db.ImportBatch{Source: b.Source, Cycles: b.Cycles}
-			size, comments = 0, 0
+			size, comments = base, 0
 		}
 		cur.Issues = append(cur.Issues, it)
 		size += len(raw)
 		comments += len(it.Comments)
 	}
-	parts = append(parts, cur)
-	// Links ride with the last part while they fit, then fill more requests,
-	// which repeat the last part's issues (already imported, so skipped).
-	links := b.Links
-	last := parts[len(parts)-1]
-	for len(links) > 0 {
-		n := min(len(links), importPartLinks)
-		if last.Links != nil {
-			last = &db.ImportBatch{Source: b.Source, Issues: last.Issues[:1]}
-			parts = append(parts, last)
+	parts, linkOnly = append(parts, cur), append(linkOnly, false)
+	for _, l := range b.Links {
+		raw, err := json.Marshal(l)
+		if err != nil {
+			return nil, nil, err
 		}
-		last.Links = links[:n]
-		links = links[n:]
+		if len(cur.Links) >= importPartLinks || size+len(raw) > importPartBytes {
+			cur = &db.ImportBatch{Source: b.Source, Issues: cur.Issues[:1]}
+			one, _ := json.Marshal(cur.Issues[0])
+			size = base + len(one)
+			parts, linkOnly = append(parts, cur), append(linkOnly, true)
+		}
+		cur.Links = append(cur.Links, l)
+		size += len(raw)
 	}
-	return parts, nil
+	return parts, linkOnly, nil
 }
 
 // parentsFirst orders issues so a parent in the batch comes before its

@@ -821,8 +821,10 @@ func (s *Server) handleImportIssues(w http.ResponseWriter, r *http.Request) {
 	var batch db.ImportBatch
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxImportBody))
 	err := dec.Decode(&batch)
-	if err == nil && dec.More() {
-		err = errors.New("data after the batch")
+	if err == nil {
+		if _, next := dec.Token(); next != io.EOF {
+			err = errors.New("data after the batch")
+		}
 	}
 	if err != nil {
 		var tooBig *http.MaxBytesError
@@ -833,13 +835,15 @@ func (s *Server) handleImportIssues(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("%w: invalid JSON body", db.ErrValidation))
 		return
 	}
+	// An unrecognized value must not turn a dry run into a real import.
 	dryRun := false
-	if v := r.URL.Query().Get("dry_run"); v != "" {
-		// An unrecognized value must not turn a dry run into a real import.
-		if dryRun, err = strconv.ParseBool(v); err != nil {
-			writeErr(w, fmt.Errorf("%w: dry_run must be 1 or 0, got %q", db.ErrValidation, v))
-			return
-		}
+	switch v := strings.ToLower(r.URL.Query().Get("dry_run")); v {
+	case "1", "true":
+		dryRun = true
+	case "", "0", "false":
+	default:
+		writeErr(w, fmt.Errorf("%w: dry_run must be 1, true, 0 or false, got %q", db.ErrValidation, v))
+		return
 	}
 	res, err := s.storeFor(r).ImportIssues(currentUser(r).ID, r.PathValue("ref"), &batch, dryRun)
 	if err != nil {

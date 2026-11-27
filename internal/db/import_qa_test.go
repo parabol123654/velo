@@ -565,7 +565,11 @@ func TestQAImportBlockChainPerformance(t *testing.T) {
 	}
 	took := time.Since(start)
 	t.Logf("%d issues with a %d-link blocks chain listed last-first: %s", n, n-1, took)
-	if took > 30*time.Second {
+	limit := 30 * time.Second // about 3 s without the race detector
+	if raceEnabled {
+		limit = 2 * time.Minute // about 27 s under -race, more on a busy CI runner
+	}
+	if took > limit {
 		t.Fatalf("import held the database for %s", took)
 	}
 }

@@ -79,6 +79,8 @@ func TestImportEndpoint(t *testing.T) {
 		{"/api/projects/NOPE/import", importBody, http.StatusNotFound},
 		{"/api/projects/DEV/import?dry_run=yes", importBody, http.StatusBadRequest},
 		{"/api/projects/DEV/import", importBody + `{"source":"x"}`, http.StatusBadRequest},
+		{"/api/projects/DEV/import?dry_run=T", importBody, http.StatusBadRequest},
+		{"/api/projects/DEV/import", importBody + `}`, http.StatusBadRequest},
 	} {
 		if code, b := call(t, "POST", ts.URL+tc.path, admin, tc.body); code != tc.want {
 			t.Fatalf("%s %s: %d %s, want %d", tc.path, tc.body, code, b, tc.want)
