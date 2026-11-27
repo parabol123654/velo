@@ -350,6 +350,7 @@ func (s *Server) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.hub.Broadcast("user.created", "", u)
 	setSessionCookie(w, tok, exp)
 	writeJSON(w, http.StatusCreated, map[string]any{"user": u, "session_token": tok})
 }
@@ -382,6 +383,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.hub.Broadcast("user.created", "", u)
 	writeJSON(w, http.StatusCreated, u)
 }
 
@@ -669,14 +671,22 @@ func (s *Server) handleCreateLabel(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.hub.Broadcast("label.created", p.ID, l)
 	writeJSON(w, http.StatusCreated, l)
 }
 
 func (s *Server) handleDeleteLabel(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteLabel(r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	projectID, err := s.store.ProjectIDOf("label", id)
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
+	if err := s.store.DeleteLabel(id); err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.Broadcast("label.deleted", projectID, map[string]string{"id": id})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
