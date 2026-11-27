@@ -97,13 +97,12 @@ None open.
 
 ## Next
 
-Order for new work, after the known gaps. Issue links, `next_issue`/`claim_issue`, `check_item` and MCP resources/prompts shipped (#6, #12, #13, #14); close those issues if they are still open. Issues titled "Idea:" (#5, #7, #8) stay out until the discussion there ends with a decision.
+Order for new work. Issues titled "Idea:" (#5, #7, #8) stay out until the discussion there ends with a decision.
 
 1. [#2](https://github.com/parabol123654/velo/issues/2) Update cycles from the CLI and MCP.
 2. [#17](https://github.com/parabol123654/velo/issues/17) Search syntax and saved filters.
 3. [#18](https://github.com/parabol123654/velo/issues/18), [#1](https://github.com/parabol123654/velo/issues/1), [#3](https://github.com/parabol123654/velo/issues/3) Release and test hygiene.
 4. [#16](https://github.com/parabol123654/velo/issues/16) Imports from GitHub Issues, Jira and Linear.
-5. [#15](https://github.com/parabol123654/velo/issues/15) `velo agent`, the largest item.
 
 ## Code map
 
