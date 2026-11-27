@@ -1,52 +1,42 @@
 # Velo
 
-A small, self-hosted issue tracker. One binary, one SQLite file, no external services.
+A small, self-hosted issue tracker for individuals, small teams and their coding agents. One binary (~12 MB, web UI embedded), one SQLite file, no external services.
 
-Velo covers the parts of Jira most small teams actually use: projects, issues, sub-issues, a Kanban board, a backlog, labels, priorities and optional sprints (cycles). It also ships a CLI and an MCP server so coding agents can read and update issues.
+- Projects with `DEV-1` style keys, sub-issues, labels, priorities, cycles (sprints) and `blocks` links.
+- Board with drag and drop, list and backlog views, live updates. Shortcuts: `Ctrl/Cmd+K` search, `C` new issue, `J`/`K` move, `Enter` open.
+- One-line filters, saved per user: `assignee:me is:open label:bug priority:>=high login`. Full-text search ignores accents (`dang nhap` finds `đăng nhập`).
+- Markdown with pasted screenshots and clickable `- [ ]` checklists.
+- A CLI, an MCP server and an agent runner, so coding agents work on the same board as people.
+- First visitor becomes admin, others join by invite link. API tokens can be read-only or limited to projects. No mail server.
+- Export a project to Markdown or JSON, import JSON.
 
-## Features
+[SPEC.md](./SPEC.md) describes every behavior in detail.
 
-- Single static binary (~12 MB). The web UI is embedded. Data lives in `./data/velo.db` plus `./data/uploads/`.
-- Issue keys per project (`DEV-1`, `DEV-2`, ...), sub-issues, labels, priorities, cycles.
-- Board, list and backlog views. Drag and drop on the board.
-- Keyboard shortcuts: `Ctrl/Cmd+K` search, `C` new issue, `J`/`K` to move, `Enter` to open.
-- Filters in one line (`assignee:me is:open label:bug priority:>=high`) on the board and in search, saved per user in the sidebar.
-- Markdown descriptions and comments. Paste screenshots with `Ctrl+V`. Clickable `- [ ]` checklists.
-- Full-text search (SQLite FTS5).
-- Live updates in the browser via Server-Sent Events.
-- Simple auth: first visit creates the admin, admins share invite links, API tokens for the CLI and MCP. No mail server needed.
-- Account management in Settings: change your password; admins reset passwords, change roles, disable or delete users.
-- Export a project to Markdown or JSON, import from JSON.
+## Run
 
-## Install
-
-Download a binary from the [releases page](https://github.com/parabol123654/velo/releases), or build from source.
-
-Requirements for building: Go 1.26+, Node.js 20+.
+From a [release binary](https://github.com/parabol123654/velo/releases):
 
 ```bash
-git clone https://github.com/parabol123654/velo.git
-cd velo
-make build
 ./velo serve --addr :8080 --data ./data
 ```
 
-Open http://localhost:8080 and create the admin account.
+From source (Go 1.26+, Node.js 20+, GNU Make):
 
-With Docker (images for `linux/amd64` and `linux/arm64`, published from v0.4.0 on and tagged with each release; `latest` is the newest full release):
+```bash
+git clone https://github.com/parabol123654/velo.git && cd velo
+make build && ./velo serve --data ./data
+```
+
+With Docker (`linux/amd64` and `linux/arm64` images from v0.4.0 on; `latest` is the newest full release):
 
 ```bash
 docker run -d -p 8080:8080 -v "$(pwd)/data:/data" ghcr.io/parabol123654/velo:latest
+# or build it: docker build --build-arg VERSION=$(git describe --tags --always) -t velo .
 ```
 
-Options go in environment variables, for example `-e VELO_TRUST_PROXY=1` or `-e VELO_GITHUB_WEBHOOK_SECRET=...`. To build the image yourself:
+Open http://localhost:8080 and create the admin account. Data lives in `data/velo.db` and `data/uploads/`. `--trust-proxy` and `--github-secret` can also be set with `VELO_TRUST_PROXY=1` and `VELO_GITHUB_WEBHOOK_SECRET`, which is handy in Docker.
 
-```bash
-docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t velo .
-docker run -d -p 8080:8080 -v "$(pwd)/data:/data" velo
-```
-
-Behind a reverse proxy that terminates HTTPS (Caddy, nginx), start Velo with `--trust-proxy` (or `VELO_TRUST_PROXY=1` or `true`). Velo then marks the session cookie `Secure` when the proxy sends `X-Forwarded-Proto: https`, and counts failed logins per client using the last `X-Forwarded-For` address. Caddy sets both headers by default; with nginx add `proxy_set_header X-Forwarded-Proto $scheme;` and `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`. Leave the flag off when clients reach Velo directly, since anyone can send these headers; with it on, the proxy must set or append them itself, or clients choose their own throttling key. It assumes one proxy: behind a chain (a CDN, then nginx) the inner proxy's address is the one counted.
+**Behind a reverse proxy** that terminates HTTPS, add `--trust-proxy`: the session cookie becomes `Secure` and failed logins are counted per client. The proxy must set `X-Forwarded-Proto` and `X-Forwarded-For` (Caddy does; in nginx, `proxy_set_header X-Forwarded-Proto $scheme;` and `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`). Leave it off when clients reach Velo directly, since anyone can send these headers. Details: [SPEC.md](./SPEC.md#accounts-and-access).
 
 ## CLI
 
@@ -54,27 +44,20 @@ Create an API token in Settings, then:
 
 ```bash
 ./velo login --url http://127.0.0.1:8080 --token velo_xxx
-
 ./velo project create DEV "Core Platform"
 ./velo issue create --project DEV --title "Fix login redirect" --priority 3 --label bug
-./velo issue list --project DEV
-./velo issue update DEV-1 --state "In Progress"
+./velo issue update DEV-1 --state "In Progress" --assignee me
 ./velo issue comment DEV-1 "Reproduced locally."
-./velo issue show DEV-1
-./velo issue update DEV-1 --assignee me --cycle "Sprint 1"
-./velo issue list --project DEV --assignee me
-./velo project show DEV                 # states, labels, cycles
-./velo cycle update --project DEV "Sprint 1" --status completed   # only the given fields change
-./velo project export DEV > DEV.md      # or --format json
-./velo search "login"
-./velo search 'assignee:me is:open priority:>=high login'   # filters + text, same syntax in MCP list_issues
+./velo search 'assignee:me is:open priority:>=high login'
 ```
 
-`VELO_URL` and `VELO_TOKEN` environment variables override the saved config.
+Run `./velo` with no arguments for every command. `VELO_URL` and `VELO_TOKEN` override the saved config.
 
-## MCP
+## Coding agents
 
-`velo mcp` runs an MCP server over stdio. Example config for Claude Code, Cursor or similar:
+Give each agent its own API token (Settings), limited to the projects it works on. Its changes show "via <token name>", and every change reaches open boards at once, because the CLI and MCP server go through the same HTTP API as the web UI.
+
+**MCP.** `velo mcp` is an MCP server over stdio. For Claude Code, Cursor and similar:
 
 ```json
 {
@@ -82,103 +65,48 @@ Create an API token in Settings, then:
     "velo": {
       "command": "/path/to/velo",
       "args": ["mcp"],
-      "env": {
-        "VELO_URL": "http://127.0.0.1:8080",
-        "VELO_TOKEN": "velo_xxx"
-      }
+      "env": { "VELO_URL": "http://127.0.0.1:8080", "VELO_TOKEN": "velo_xxx" }
     }
   }
 }
 ```
 
-Tools: `list_projects`, `get_project`, `list_users`, `list_issues`, `get_issue`, `create_issue`, `update_issue`, `delete_issue`, `next_issue`, `claim_issue`, `check_item`, `link_issues`, `unlink_issues`, `add_comment`, `search_issues`, `create_label`, `create_cycle`, `update_cycle`, `export_project`.
+A typical loop: `next_issue` → `claim_issue` → work → `check_item` per acceptance criterion → `add_comment` → `update_issue` to In Review. The `work_on_issue` prompt walks an agent through it. Tools, resources and prompts: [SPEC.md](./SPEC.md#integrations).
 
-Assignees can be given as an email or `me`, cycles and labels by name, parents by identifier (`DEV-1`).
+**Agent runner.** `velo agent` runs a coding agent on your machine for each issue labeled `agent`:
 
-It also serves resources (`velo://issue/DEV-12`, `velo://project/DEV`) and prompts: `work_on_issue`, `split_issue`, `summarize_cycle`. A typical agent loop: `next_issue` → `claim_issue` → work → `check_item` for each acceptance criterion → `add_comment` → `update_issue` to In Review. Give each agent its own API token (Settings), limited to the projects it works on; its changes show "via <token name>".
+```bash
+VELO_URL=http://127.0.0.1:8080 VELO_TOKEN=velo_xxx ./velo agent --cmd 'claude -p {prompt}' --dir ~/code/myrepo
+```
 
-Changes made through MCP or the CLI go through the same HTTP API as the web UI, so open boards update immediately.
+It claims the issue, runs the command (without a shell; `{prompt}` and `{issue}` are filled in, or the prompt goes to stdin) and comments the exit code and the end of the output. The command gets `VELO_URL`, `VELO_TOKEN` and `VELO_ISSUE`, so an agent with the MCP server can tick checklist items and move the issue itself. One issue at a time; a failed run stays assigned and is not retried. Flags: `--label`, `--project`, `--timeout` (1h), `--once`, `--dry-run`.
+
+## GitHub webhook
+
+Start Velo with `--github-secret <secret>`. In the GitHub repo, add a webhook (Settings > Webhooks) with payload URL `https://<your-velo-host>/api/webhooks/github`, content type `application/json`, the same secret, and the events "Pushes" and "Pull requests". Velo must be reachable from GitHub.
+
+Commits and pull requests that mention `DEV-42` get a comment on DEV-42. `Fixes`, `Closes` or `Resolves DEV-42` on the default branch, or in a pull request merged into it, moves the issue to Done.
 
 ## Backup
 
 ```bash
 ./velo backup --data ./data backup-$(date +%F).db   # safe while the server runs
-cp -r ./data/uploads backup-uploads/                 # pasted images are plain files
+cp -r ./data/uploads backup-uploads/
 ```
 
-With Docker: `docker exec <container> velo backup --data /data /data/backup.db`. To restore, stop Velo and put the backup in place as `data/velo.db`.
+Don't copy `velo.db` alone while the server runs: recent writes may still be in `velo.db-wal`. To restore, stop Velo and put the backup in place as `data/velo.db`. In Docker: `docker exec <container> velo backup --data /data /data/backup.db`.
 
-Do not copy `velo.db` alone while the server runs: recent writes may still be in `velo.db-wal`.
-
-Older versions kept pasted images when their issue or project was deleted. To find and remove uploads nothing uses (files with no record, and uploads no issue or comment links; in both cases only those older than a day):
-
-```bash
-./velo uploads prune --data ./data           # lists what would be deleted
-./velo uploads prune --data ./data --apply   # deletes it; safe while the server runs
-```
-
-With Docker: `docker exec <container> velo uploads prune --data /data`.
-
-## Agent runner
-
-`velo agent` hands issues to a coding agent on your machine. Add the label `agent` to an issue on the board and the runner picks it up:
-
-```bash
-export VELO_URL=http://127.0.0.1:8080 VELO_TOKEN=velo_xxx   # a token just for the agent
-./velo agent --cmd 'claude -p {prompt}' --dir ~/code/myrepo
-```
-
-For each issue it claims the issue (assigned to you, moved to In Progress), runs the command with the `work_on_issue` prompt, and comments the exit code and the end of the output. `{prompt}` and `{issue}` are replaced inside arguments; without `{prompt}` the prompt is sent on stdin. The command runs without a shell, so issue text cannot inject commands. The command gets `VELO_URL`, `VELO_TOKEN` and `VELO_ISSUE`, so an agent with Velo's MCP server configured can tick checklist items and move the issue itself.
-
-One issue at a time. A failed or timed-out run leaves the issue assigned so it is not retried in a loop. Useful flags: `--label` (default `agent`), `--project`, `--timeout` (default 1h), `--once`, `--dry-run`.
-
-## GitHub webhook
-
-Start Velo with a secret:
-
-```bash
-./velo serve --github-secret "some-long-random-string"
-# or: VELO_GITHUB_WEBHOOK_SECRET=... ./velo serve
-```
-
-In your GitHub repo, go to Settings > Webhooks > Add webhook:
-
-- Payload URL: `https://your-velo-host/api/webhooks/github`
-- Content type: `application/json`
-- Secret: the same string
-- Events: "Pushes" and "Pull requests"
-
-What it does:
-
-- A commit mentioning `DEV-42` adds a comment on DEV-42 with a link to the commit.
-- `Fixes DEV-42`, `Closes DEV-42` or `Resolves DEV-42` in a commit pushed to the default branch moves the issue to Done. On other branches it only comments.
-- A pull request mentioning issues adds a comment when opened. When it is merged into the default branch, issues with a closing keyword in the title or body move to Done.
-- If the commit author's email matches a Velo user, the comment is posted as that user. Otherwise it is posted as "GitHub".
-
-Velo must be reachable from GitHub for this to work (a VPS, or a tunnel when running locally).
+Older versions kept uploads after their issue was deleted. `./velo uploads prune --data ./data` lists unused uploads older than a day; add `--apply` to delete them.
 
 ## Development
 
 ```bash
-make check                 # every check a pull request needs
-make test                  # Go tests
-make test-web              # web tests (Vitest)
-cd web && npm run dev      # UI dev server on :5173, proxies /api to :8080
+make check                  # what CI runs: build, vet, gofmt, Go and web tests
+make race                   # go test -race (needs a C compiler)
+cd web && npm run dev       # UI on :5173, proxies /api to a running ./velo serve on :8080
 ```
 
-Layout:
-
-```
-cmd/velo/         entrypoint
-internal/db/      SQLite schema and queries (database/sql, no ORM)
-internal/server/  HTTP API, auth, uploads, SSE
-internal/cli/     CLI commands
-internal/mcp/     MCP stdio server
-internal/client/  HTTP client used by CLI and MCP
-web/              React + TypeScript + Tailwind UI
-```
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md) to get started. Contributors and coding agents should read [AGENTS.md](./AGENTS.md). The system is described in [SPEC.md](./SPEC.md), open work is in [GitHub Issues](https://github.com/parabol123654/velo/issues).
+Start with [CONTRIBUTING.md](./CONTRIBUTING.md) (setup, rules, pull requests). The code map is in [SPEC.md](./SPEC.md#code-map); coding agents also read [AGENTS.md](./AGENTS.md). Open work is in [GitHub Issues](https://github.com/parabol123654/velo/issues), security reports go through [SECURITY.md](./SECURITY.md).
 
 ## License
 
