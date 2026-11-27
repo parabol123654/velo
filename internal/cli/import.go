@@ -9,6 +9,7 @@ import (
 
 	"github.com/parabol123654/velo/internal/client"
 	"github.com/parabol123654/velo/internal/db"
+	"github.com/parabol123654/velo/internal/importer"
 )
 
 // velo import reads issues from another tracker on this machine, turns them
@@ -16,6 +17,7 @@ import (
 // never opens the database. Running it again skips what is already imported.
 
 const importUsage = `usage: velo import <source> ... --project KEY [--dry-run]
+  velo import github OWNER/REPO --project KEY  issues, comments, milestones and sub-issues of a GitHub repository
   velo import file BATCH.json --project KEY    a batch in the API's import format (see SPEC.md)`
 
 func runImport(args []string) error {
@@ -38,6 +40,32 @@ func runImport(args []string) error {
 			return fmt.Errorf("%s: %w", path, err)
 		}
 		return common.send(&b)
+
+	case "github":
+		fs, common := importFlags("import github")
+		token := fs.String("github-token", "", "GitHub token (default $GITHUB_TOKEN, then $GH_TOKEN); needed for private repositories and big imports")
+		api := fs.String("github-api", "https://api.github.com", "GitHub API URL; for GitHub Enterprise, https://HOST/api/v3")
+		users := userMap{}
+		fs.Var(users, "map-user", "LOGIN=EMAIL: assign LOGIN's issues to the Velo user with EMAIL (repeatable)")
+		repo, err := parseWithArg(fs, args[1:], "velo import github OWNER/REPO --project KEY [--map-user LOGIN=EMAIL]... [--dry-run]")
+		if err != nil {
+			return err
+		}
+		if err := common.check(); err != nil {
+			return err
+		}
+		if *token == "" {
+			*token = os.Getenv("GITHUB_TOKEN")
+		}
+		if *token == "" {
+			*token = os.Getenv("GH_TOKEN")
+		}
+		fmt.Fprintf(os.Stderr, "Reading %s from GitHub...\n", repo)
+		b, err := (&importer.GitHub{APIURL: *api, Token: *token, Users: users}).Batch(repo)
+		if err != nil {
+			return err
+		}
+		return common.send(b)
 	}
 	return fmt.Errorf("unknown import source %q\n%s", args[0], importUsage)
 }
@@ -77,15 +105,41 @@ func parseWithArg(fs *flag.FlagSet, args []string, usage string) (string, error)
 	return pos[0], nil
 }
 
-func (o *importCommon) send(b *db.ImportBatch) error {
+func (o *importCommon) check() error {
 	if strings.TrimSpace(*o.project) == "" {
 		return fmt.Errorf("--project is required")
+	}
+	return nil
+}
+
+func (o *importCommon) send(b *db.ImportBatch) error {
+	if err := o.check(); err != nil {
+		return err
+	}
+	if len(b.Issues) == 0 {
+		fmt.Println("Nothing to import: no issues found.")
+		return nil
 	}
 	res, err := sendImport(newAPIClient(*o.url, *o.token), *o.project, b, *o.dryRun)
 	if err != nil {
 		return err
 	}
 	printImportResult(res, *o.project)
+	return nil
+}
+
+// userMap is a repeatable LOGIN=EMAIL flag; logins match ignoring case and a leading @.
+type userMap map[string]string
+
+func (m userMap) String() string { return "" }
+
+func (m userMap) Set(v string) error {
+	login, email, ok := strings.Cut(v, "=")
+	login = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(login), "@"))
+	if !ok || login == "" || !strings.Contains(email, "@") {
+		return fmt.Errorf("want LOGIN=EMAIL, got %q", v)
+	}
+	m[login] = strings.TrimSpace(email)
 	return nil
 }
 

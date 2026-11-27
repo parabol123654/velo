@@ -105,7 +105,8 @@ Usage:
   velo backup [--data ./data] <FILE.db>         Copy the database safely, even while serving
   velo uploads prune [--data ./data] [--apply]  List (or with --apply, delete) uploads nothing uses
   velo agent --cmd '<command>' [--label agent]  Run a local coding agent on issues labeled for it
-  velo import file <BATCH.json> --project KEY   Import issues from another tracker [--dry-run]; reruns skip what exists
+  velo import github <OWNER/REPO> --project KEY Import a GitHub repository's issues [--map-user LOGIN=EMAIL] [--dry-run]
+  velo import file <BATCH.json> --project KEY   Import issues in the API's batch format [--dry-run]; reruns skip what exists
   velo version                                  Print version
 `)
 }
