@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -116,6 +117,26 @@ func (s *Store) ExportProjectMarkdown(projectRef string) (string, error) {
 func (s *Store) ImportProjectJSON(actorID string, b *ExportBundle) (*Project, error) {
 	if b == nil || b.Project.Key == "" || b.Project.Name == "" {
 		return nil, fmt.Errorf("%w: invalid export bundle", ErrValidation)
+	}
+	// Check issue labels before creating anything: import is not one
+	// transaction, and CreateIssue refuses unknown labels.
+	known := map[string]bool{}
+	for _, l := range defaultLabels {
+		known[strings.ToLower(l.name)] = true
+	}
+	for _, l := range b.Labels {
+		known[strings.ToLower(l.Name)] = true
+	}
+	var missing []string
+	for _, ei := range b.Issues {
+		for _, name := range ei.Labels {
+			if !known[strings.ToLower(name)] {
+				missing = append(missing, ei.Identifier+": "+strconv.Quote(name))
+			}
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("%w: issues use labels the bundle does not define: %s", ErrValidation, strings.Join(missing, ", "))
 	}
 	proj, err := s.CreateProject(b.Project.Key, b.Project.Name, b.Project.Description)
 	if err != nil {

@@ -76,15 +76,6 @@ func (s *Store) CreateProject(key, name, description string) (*Project, error) {
 		}
 	}
 
-	defaultLabels := []struct {
-		name  string
-		color string
-	}{
-		{"bug", "#ef4444"},
-		{"feature", "#6366f1"},
-		{"improvement", "#0ea5e9"},
-		{"chore", "#64748b"},
-	}
 	for _, lb := range defaultLabels {
 		if _, err := tx.Exec(
 			`INSERT INTO labels (id, project_id, name, color) VALUES (?, ?, ?, ?)`,
@@ -419,4 +410,15 @@ func (s *Store) DeleteCycle(id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// defaultLabels are created with every new project.
+var defaultLabels = []struct {
+	name  string
+	color string
+}{
+	{"bug", "#ef4444"},
+	{"feature", "#6366f1"},
+	{"improvement", "#0ea5e9"},
+	{"chore", "#64748b"},
 }

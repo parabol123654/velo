@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -132,14 +134,8 @@ func (s *Store) CreateIssue(actorID string, in CreateIssueInput) (*Issue, error)
 		return nil, err
 	}
 
-	for _, lid := range in.LabelIDs {
-		var resolvedID string
-		if err := tx.QueryRow(
-			`SELECT id FROM labels WHERE project_id = ? AND (id = ? OR name = ? COLLATE NOCASE)`,
-			proj.ID, lid, lid,
-		).Scan(&resolvedID); err == nil {
-			_, _ = tx.Exec(`INSERT OR IGNORE INTO issue_labels (issue_id, label_id) VALUES (?, ?)`, issueID, resolvedID)
-		}
+	if err := setLabels(tx, proj.ID, issueID, in.LabelIDs); err != nil {
+		return nil, err
 	}
 
 	_, err = tx.Exec(
@@ -575,14 +571,8 @@ func (s *Store) applyIssuePatch(tx *sql.Tx, actorID string, cur *Issue, patch Up
 		if _, err := tx.Exec(`DELETE FROM issue_labels WHERE issue_id = ?`, cur.ID); err != nil {
 			return err
 		}
-		for _, lid := range *patch.LabelIDs {
-			var resolvedID string
-			if err := tx.QueryRow(
-				`SELECT id FROM labels WHERE project_id = ? AND (id = ? OR name = ? COLLATE NOCASE)`,
-				cur.ProjectID, lid, lid,
-			).Scan(&resolvedID); err == nil {
-				_, _ = tx.Exec(`INSERT OR IGNORE INTO issue_labels (issue_id, label_id) VALUES (?, ?)`, cur.ID, resolvedID)
-			}
+		if err := setLabels(tx, cur.ProjectID, cur.ID, *patch.LabelIDs); err != nil {
+			return err
 		}
 	}
 
@@ -827,4 +817,34 @@ func (s *Store) ProjectIDOf(kind, id string) (string, error) {
 		return "", ErrNotFound
 	}
 	return pid, err
+}
+
+// setLabels adds labels, by ID or case-insensitive name, to an issue. Any
+// reference that is not a label of the project fails the whole call, so the
+// caller's transaction writes nothing.
+func setLabels(tx *sql.Tx, projectID, issueID string, refs []string) error {
+	var unknown []string
+	for _, ref := range refs {
+		var id string
+		err := tx.QueryRow(
+			`SELECT id FROM labels WHERE project_id = ? AND (id = ? OR name = ? COLLATE NOCASE)`,
+			projectID, ref, ref,
+		).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			if !slices.Contains(unknown, strconv.Quote(ref)) {
+				unknown = append(unknown, strconv.Quote(ref))
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO issue_labels (issue_id, label_id) VALUES (?, ?)`, issueID, id); err != nil {
+			return err
+		}
+	}
+	if len(unknown) > 0 {
+		return fmt.Errorf("%w: unknown labels: %s (create them first)", ErrValidation, strings.Join(unknown, ", "))
+	}
+	return nil
 }
