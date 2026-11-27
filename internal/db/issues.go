@@ -470,6 +470,16 @@ func (s *Store) applyIssuePatch(tx *sql.Tx, actorID string, cur *Issue, patch Up
 	desc := cur.Description
 	if patch.Description != nil {
 		desc = *patch.Description
+		// Field only: copying the text into history would double its size.
+		if desc != cur.Description {
+			if _, err := tx.Exec(
+				`INSERT INTO activities (id, issue_id, actor_id, action, field, old_value, new_value, via, created_at)
+				 VALUES (?, ?, ?, 'updated', 'description', '', '', ?, ?)`,
+				newID(), cur.ID, actorID, s.via, now,
+			); err != nil {
+				return err
+			}
+		}
 	}
 
 	stateID := cur.StateID
@@ -524,6 +534,7 @@ func (s *Store) applyIssuePatch(tx *sql.Tx, actorID string, cur *Issue, patch Up
 	parentID := cur.ParentID
 	if patch.ParentID != nil {
 		rawParent := strings.TrimSpace(*patch.ParentID)
+		newParentIdent := ""
 		if rawParent == "" {
 			parentID = ""
 		} else {
@@ -547,6 +558,10 @@ func (s *Store) applyIssuePatch(tx *sql.Tx, actorID string, cur *Issue, patch Up
 				}
 			}
 			parentID = resolvedParent
+			newParentIdent = parentIdent
+		}
+		if err := logActivity("parent", cur.ParentIdentifier, newParentIdent); err != nil {
+			return err
 		}
 	}
 
@@ -568,10 +583,21 @@ func (s *Store) applyIssuePatch(tx *sql.Tx, actorID string, cur *Issue, patch Up
 	}
 
 	if patch.LabelIDs != nil {
+		before, err := labelNames(tx, cur.ID)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.Exec(`DELETE FROM issue_labels WHERE issue_id = ?`, cur.ID); err != nil {
 			return err
 		}
 		if err := setLabels(tx, cur.ProjectID, cur.ID, *patch.LabelIDs); err != nil {
+			return err
+		}
+		after, err := labelNames(tx, cur.ID)
+		if err != nil {
+			return err
+		}
+		if err := logActivity("labels", before, after); err != nil {
 			return err
 		}
 	}
@@ -645,7 +671,7 @@ func (s *Store) ListActivities(issueID string) ([]Activity, error) {
 	rows, err := s.db.Query(`
 		SELECT a.id, a.issue_id, a.actor_id, u.name, a.action, a.field, a.old_value, a.new_value, a.via, a.created_at
 		FROM activities a JOIN users u ON u.id = a.actor_id
-		WHERE a.issue_id = ? ORDER BY a.created_at ASC
+		WHERE a.issue_id = ? ORDER BY a.created_at ASC, a.rowid ASC
 	`, issueID)
 	if err != nil {
 		return nil, err
@@ -847,4 +873,23 @@ func setLabels(tx *sql.Tx, projectID, issueID string, refs []string) error {
 		return fmt.Errorf("%w: unknown labels: %s (create them first)", ErrValidation, strings.Join(unknown, ", "))
 	}
 	return nil
+}
+
+// labelNames lists an issue's label names, sorted, as "bug, feature".
+func labelNames(tx *sql.Tx, issueID string) (string, error) {
+	rows, err := tx.Query(`SELECT l.name FROM issue_labels il JOIN labels l ON l.id = il.label_id
+		WHERE il.issue_id = ? ORDER BY l.name COLLATE NOCASE`, issueID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return "", err
+		}
+		names = append(names, n)
+	}
+	return strings.Join(names, ", "), rows.Err()
 }

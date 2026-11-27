@@ -345,8 +345,12 @@ export function assignableUsers(users: User[], selectedId?: string): User[] {
 export function describeActivity(ac: Pick<Activity, 'action' | 'field' | 'old_value' | 'new_value'>): string {
   if (ac.action === 'created') return 'created this issue';
   if (ac.field === 'checklist') return ac.new_value ?? '';
+  if (ac.field === 'description') return 'edited the description';
   if (ac.field === 'link') {
-    return ac.new_value ? `linked: ${ac.new_value.replace('_', ' ')}` : `removed the link to ${ac.old_value}`;
+    if (ac.new_value) return `linked: ${ac.new_value.replace('_', ' ')}`;
+    // Older entries hold only the other issue; newer ones "kind KEY-N".
+    const old = ac.old_value ?? '';
+    return old.includes(' ') ? `unlinked: ${old.replace('_', ' ')}` : `removed the link to ${old}`;
   }
   return `changed ${ac.field} from "${ac.old_value || 'none'}" to "${ac.new_value || 'none'}"`;
 }
