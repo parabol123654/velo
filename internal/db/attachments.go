@@ -3,7 +3,13 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
+	"time"
 )
 
 // attachmentRef finds attachment IDs in Markdown links such as
@@ -86,4 +92,135 @@ func releaseAttachments(tx *sql.Tx, projectID, issueScope string, args ...any) (
 		}
 	}
 	return gone, nil
+}
+
+// pruneGrace keeps recent uploads: a file may be written before its row, and
+// an upload pasted into an unsaved form has no issue yet.
+const pruneGrace = 24 * time.Hour
+
+// PruneReport lists what PruneUploads removed, or would remove.
+type PruneReport struct {
+	Files []PrunedFile
+	Bytes int64
+}
+
+// PrunedFile is one file in uploads/. Reason is "no row" (a file no
+// attachment points to) or "unused" (an attachment no issue owns or links).
+type PrunedFile struct {
+	Name   string
+	Bytes  int64
+	Reason string
+}
+
+// PruneUploads finds uploads left behind by older versions, which kept
+// attachments and files when their issue or project was deleted: files in
+// uploadsDir with no attachment row, and attachments with no issue that no
+// description or comment links. Both must be older than a day. With apply,
+// the rows are deleted in one transaction and then the files are removed;
+// otherwise nothing changes.
+func (s *Store) PruneUploads(uploadsDir string, apply bool) (*PruneReport, error) {
+	cutoff := time.Now().Add(-pruneGrace)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	rep := &PruneReport{}
+	add := func(name, reason string) {
+		var size int64
+		if fi, err := os.Stat(filepath.Join(uploadsDir, name)); err == nil {
+			size = fi.Size()
+		}
+		rep.Files = append(rep.Files, PrunedFile{Name: name, Bytes: size, Reason: reason})
+		rep.Bytes += size
+	}
+
+	// Unused attachments.
+	rows, err := tx.Query(`
+		SELECT a.id, a.storage_name FROM attachments a
+		WHERE a.issue_id IS NULL AND a.created_at < ?
+		  AND NOT EXISTS (SELECT 1 FROM issues i WHERE i.description LIKE '%/api/attachments/' || a.id || '/%')
+		  AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.body LIKE '%/api/attachments/' || a.id || '/%')
+		ORDER BY a.storage_name`, cutoff.UTC())
+	if err != nil {
+		return nil, err
+	}
+	var unusedIDs []string
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		unusedIDs = append(unusedIDs, id)
+		add(name, "unused")
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Files no row points to (rows deleted above still count as known).
+	known := map[string]bool{}
+	rows, err = tx.Query(`SELECT storage_name FROM attachments`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		known[name] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(uploadsDir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	for _, e := range entries {
+		if !e.Type().IsRegular() || known[e.Name()] {
+			continue
+		}
+		if fi, err := e.Info(); err != nil || fi.ModTime().After(cutoff) {
+			continue
+		}
+		add(e.Name(), "no row")
+	}
+
+	if !apply {
+		return rep, nil
+	}
+	// Deleting by id alone is safe because the reads above and these deletes
+	// share one transaction (one snapshot): if the server links one of these
+	// uploads meanwhile, the commit fails with SQLITE_BUSY and nothing goes.
+	for _, id := range unusedIDs {
+		if _, err := tx.Exec(`DELETE FROM attachments WHERE id = ?`, id); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	// The rows are gone; a file that cannot be removed now has no row, so the
+	// next run lists it again. Report only what was removed.
+	removed := &PruneReport{}
+	var failed []string
+	for _, f := range rep.Files {
+		if err := os.Remove(filepath.Join(uploadsDir, f.Name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			failed = append(failed, fmt.Sprintf("%s: %v", f.Name, err))
+			continue
+		}
+		removed.Files = append(removed.Files, f)
+		removed.Bytes += f.Bytes
+	}
+	if len(failed) > 0 {
+		return removed, fmt.Errorf("could not remove %d files (run again to retry): %s", len(failed), strings.Join(failed, "; "))
+	}
+	return removed, nil
 }

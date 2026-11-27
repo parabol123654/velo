@@ -52,6 +52,8 @@ func Run(args []string) error {
 		return runMCP(args[1:])
 	case "backup":
 		return runBackup(args[1:])
+	case "uploads":
+		return runUploads(args[1:])
 	case "agent":
 		return runAgent(args[1:])
 	case "version", "-v", "--version":
@@ -95,6 +97,7 @@ Usage:
   velo search <QUERY>                           Instant FTS5 full-text search
   velo mcp [--url ...] [--token ...]            Start MCP server over stdio for AI coding agents
   velo backup [--data ./data] <FILE.db>         Copy the database safely, even while serving
+  velo uploads prune [--data ./data] [--apply]  List (or with --apply, delete) uploads nothing uses
   velo agent --cmd '<command>' [--label agent]  Run a local coding agent on issues labeled for it
   velo version                                  Print version
 `)
@@ -856,6 +859,53 @@ func runBackup(args []string) error {
 	}
 	fmt.Printf("Backed up %s to %s (uploads are files in %s; copy that folder too)\n",
 		dbPath, out, filepath.Join(*dataDir, "uploads"))
+	return nil
+}
+
+// runUploads works on the data directory directly, like backup: it is
+// server-side maintenance, so it needs no login (SPEC.md, Invariant 3).
+func runUploads(args []string) error {
+	if len(args) == 0 || args[0] != "prune" {
+		return fmt.Errorf("usage: velo uploads prune [--data ./data] [--apply]")
+	}
+	fs := flag.NewFlagSet("uploads prune", flag.ContinueOnError)
+	dataDir := fs.String("data", "./data", "Data directory of the Velo server")
+	apply := fs.Bool("apply", false, "Delete what is listed (default: only list it)")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q; usage: velo uploads prune [--data ./data] [--apply]", fs.Arg(0))
+	}
+	dbPath := filepath.Join(*dataDir, "velo.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		return fmt.Errorf("no database at %s: %w", dbPath, err)
+	}
+	st, err := db.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	rep, err := st.PruneUploads(filepath.Join(*dataDir, "uploads"), *apply)
+	if rep != nil {
+		for _, f := range rep.Files {
+			fmt.Printf("%-8s %10d  %s\n", f.Reason, f.Bytes, f.Name)
+		}
+	}
+	if err != nil {
+		if *apply && rep != nil {
+			fmt.Printf("Deleted %d files (%d bytes) before the error.\n", len(rep.Files), rep.Bytes)
+		}
+		return err
+	}
+	switch {
+	case len(rep.Files) == 0:
+		fmt.Println("Nothing to prune.")
+	case *apply:
+		fmt.Printf("Deleted %d files (%d bytes).\n", len(rep.Files), rep.Bytes)
+	default:
+		fmt.Printf("%d files (%d bytes) would be deleted. Run again with --apply to delete them.\n", len(rep.Files), rep.Bytes)
+	}
 	return nil
 }
 
