@@ -22,14 +22,13 @@ For UI work, run `./velo serve` and `cd web && npm run dev` side by side. The de
 
 ## Checks
 
-Run these before opening a pull request. CI runs the same ones.
+Run these before opening a pull request. CI runs the same ones, plus a check of the frontmatter in `.claude/agents/` and `.claude/skills/`.
 
 ```bash
-make test                      # Go tests
-make test-web                  # web tests (Vitest)
-go vet ./...
-gofmt -l internal cmd          # must print nothing
-cd web && npm run build        # type-checks and builds the UI
+make build && go vet ./... && make test     # build, vet, Go tests
+cd web && npm test && npm run build         # web tests (Vitest), type-check and build the UI
+gofmt -l $(git ls-files '*.go')             # must print nothing
+CGO_ENABLED=1 go test -race ./...           # needs a C compiler; CI runs it in the race job
 ```
 
 Every change comes with a test that would fail without it. Bug fixes start with a test that reproduces the bug.
@@ -49,6 +48,8 @@ Every change comes with a test that would fail without it. Bug fixes start with 
 - If the change alters behavior described in SPEC.md, update SPEC.md in the same PR. Link the issue it closes (`Fixes #12`).
 - Commit messages follow `type: summary` with `feat`, `fix`, `docs`, `test`, `chore` or `style`, for example `fix: keep the current session after a password change`.
 - Describe what changed, why, and how you checked it.
+- Fill in the [pull request template](./.github/pull_request_template.md). It records the verdict of the code review (APPROVED, with any Medium finding left open and why) and of QA (QA PASS). Contributors using Claude Code get both from the `code-reviewer` and `qa-tester` subagents in `.claude/agents/`; see [CLAUDE.md](./CLAUDE.md). Small changes as CLAUDE.md defines them, and contributors without Claude Code, write "n/a: maintainer review" in those sections; a maintainer then reviews the PR before merging.
+- `main` is protected: changes land only through pull requests with green CI, never by pushing to it.
 
 ## License
 

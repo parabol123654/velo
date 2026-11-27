@@ -20,3 +20,47 @@ jobs:
       - run: go vet ./...
       - run: make test
       - run: cd web && npm test
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l $(git ls-files '*.go'))"
+          if [ -n "$unformatted" ]; then
+            echo "Run gofmt -w on:"; echo "$unformatted"; exit 1
+          fi
+      - name: Agent and skill frontmatter
+        run: |
+          status=0
+          checked=0
+          for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do
+            [ -e "$f" ] || continue
+            checked=$((checked + 1))
+            if [ "$(head -n 1 "$f")" != "---" ]; then
+              echo "$f: must start with ---"; status=1; continue
+            fi
+            if [ "$(grep -c '^---$' "$f")" -lt 2 ]; then
+              echo "$f: frontmatter has no closing ---"; status=1; continue
+            fi
+            front="$(awk 'NR == 1 { next } /^---$/ { exit } { print }' "$f")"
+            for key in name description; do
+              if ! printf '%s\n' "$front" | grep -q "^$key:"; then
+                echo "$f: frontmatter has no '$key:'"; status=1
+              fi
+            done
+          done
+          if [ "$checked" -eq 0 ]; then
+            echo "no agent or skill files found; did .claude/ move?"; status=1
+          fi
+          exit $status
+
+  # The race detector needs cgo. Release binaries are still built with CGO_ENABLED=0.
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make build-web # tests serve the embedded UI
+      - run: CGO_ENABLED=1 go test -race ./...
