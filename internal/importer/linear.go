@@ -33,6 +33,12 @@ func (l *LinearCSV) Batch(r io.Reader) (*db.ImportBatch, []string, error) {
 	}
 	b := &db.ImportBatch{Source: "linear"}
 	cycles := map[string]bool{}
+	var w notes
+	unknownPriority := map[string]bool{}
+	teams := map[string]bool{}
+	for _, row := range t.rows {
+		teams[t.get(row, "Team")] = true
+	}
 	for n, row := range t.rows {
 		key := t.get(row, "ID")
 		if key == "" {
@@ -43,8 +49,8 @@ func (l *LinearCSV) Batch(r io.Reader) (*db.ImportBatch, []string, error) {
 			Title:       t.get(row, "Title"),
 			Description: t.get(row, "Description"),
 			Author:      t.get(row, "Creator"),
-			Priority:    priorityOf(t.get(row, "Priority")),
-			CreatedAt:   parseTime(t.get(row, "Created")),
+			Priority:    linearPriority(t.get(row, "Priority"), &w, unknownPriority),
+			CreatedAt:   w.date("Created", t.get(row, "Created")),
 			State:       t.get(row, "Status"),
 		}
 		if it.Title == "" {
@@ -83,13 +89,35 @@ func (l *LinearCSV) Batch(r io.Reader) (*db.ImportBatch, []string, error) {
 		if num := t.get(row, "Cycle Number"); it.Cycle == "" && num != "" {
 			it.Cycle = "Cycle " + num
 		}
+		if team := t.get(row, "Team"); it.Cycle != "" && len(teams) > 1 && team != "" {
+			it.Cycle = team + " / " + it.Cycle // each team numbers its own cycles
+		}
 		if it.Cycle != "" && !cycles[it.Cycle] {
 			cycles[it.Cycle] = true
 			b.Cycles = append(b.Cycles, linearCycle(it.Cycle, t.get(row, "Cycle Start"), t.get(row, "Cycle End"), now))
 		}
 		b.Issues = append(b.Issues, it)
 	}
-	return b, keepInside(b), nil
+	w.unknownPriorities(unknownPriority)
+	return b, append(w.list, keepInside(b)...), nil
+}
+
+// linearPriority reads Linear's names, or its numbers (0 none, 1 urgent ...
+// 4 low), which some exports use.
+func linearPriority(v string, w *notes, unknown map[string]bool) int {
+	switch strings.TrimSpace(v) {
+	case "0":
+		return 0
+	case "1":
+		return 4
+	case "2":
+		return 3
+	case "3":
+		return 2
+	case "4":
+		return 1
+	}
+	return w.priority(v, unknown)
 }
 
 // linearCycle dates a cycle and sets its status from today.

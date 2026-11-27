@@ -55,3 +55,29 @@ func TestLinearBatch(t *testing.T) {
 		t.Fatalf("missing ID column: %v", err)
 	}
 }
+
+// Review findings: numeric priorities (Linear's API scale, 0 none to 4 low)
+// map onto Velo's; unknown ones and unreadable dates are reported; cycles of
+// different teams that share a name stay apart.
+func TestLinearReviewFindings(t *testing.T) {
+	csv := "ID,Team,Title,Status,Priority,Created,Cycle Name\n" +
+		"ENG-1,Engineering,a,Todo,1,someday,Cycle 5\n" +
+		"OPS-1,Ops,b,Todo,4,2024-03-02T10:00:00.000Z,Cycle 5\n" +
+		"OPS-2,Ops,c,Todo,P2,2024-03-02T10:00:00.000Z,\n"
+	b, warnings, err := (&LinearCSV{}).Batch(strings.NewReader(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Issues[0].Priority != 4 || b.Issues[1].Priority != 1 || b.Issues[2].Priority != 0 {
+		t.Fatalf("priorities: %d %d %d", b.Issues[0].Priority, b.Issues[1].Priority, b.Issues[2].Priority)
+	}
+	if b.Issues[0].Cycle != "Engineering / Cycle 5" || b.Issues[1].Cycle != "Ops / Cycle 5" || len(b.Cycles) != 2 {
+		t.Fatalf("cycles: %q %q %+v", b.Issues[0].Cycle, b.Issues[1].Cycle, b.Cycles)
+	}
+	all := strings.Join(warnings, "\n")
+	for _, want := range []string{`Created`, `"someday"`, `unknown priorities: "P2"`} {
+		if !strings.Contains(all, want) {
+			t.Errorf("warnings lack %q:\n%s", want, all)
+		}
+	}
+}
