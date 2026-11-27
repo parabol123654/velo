@@ -116,14 +116,26 @@ export function App() {
       .finally(() => setBooting(false));
   }, []);
 
+  // loadWorkspace reads the active project through a ref, so it never changes:
+  // depending on activeKey made the effect below load everything twice (#39).
+  // Each call has a number; a call that a newer one has overtaken drops its
+  // results instead of overwriting newer state.
+  const activeKeyRef = useRef(activeKey);
+  activeKeyRef.current = activeKey;
+  const loadSeq = useRef(0);
   const loadWorkspace = useCallback(async (preferredKey?: string) => {
+    const seq = ++loadSeq.current;
+    // A load that overtakes this one (an SSE reload) must keep the chosen project.
+    if (preferredKey) activeKeyRef.current = preferredKey;
     const [projs, team] = await Promise.all([api.listProjects(), api.listUsers()]);
+    if (seq !== loadSeq.current) return;
     setProjects(projs);
     setUsers(team);
 
+    const current = activeKeyRef.current;
     const targetKey =
       preferredKey ||
-      (projs.some((p) => p.key === activeKey) ? activeKey : projs[0]?.key || '');
+      (projs.some((p) => p.key === current) ? current : projs[0]?.key || '');
 
     if (!targetKey) {
       setActiveKey('');
@@ -135,15 +147,17 @@ export function App() {
     }
 
     setActiveKey(targetKey);
+    activeKeyRef.current = targetKey;
     const [bundle, projIssues] = await Promise.all([
       api.getProjectBundle(targetKey),
       api.listIssues({ project: targetKey }),
     ]);
+    if (seq !== loadSeq.current) return;
     setStates(bundle.states);
     setLabels(bundle.labels);
     setCycles(bundle.cycles);
     setIssues(projIssues);
-  }, [activeKey]);
+  }, []);
 
   useEffect(() => {
     if (user) {
@@ -154,8 +168,6 @@ export function App() {
   // Refs let the long-lived SSE handler see current state without reconnecting.
   const issuesRef = useRef(issues);
   issuesRef.current = issues;
-  const activeKeyRef = useRef(activeKey);
-  activeKeyRef.current = activeKey;
   const projectIdRef = useRef('');
   projectIdRef.current = projects.find((p) => p.key === activeKey)?.id ?? '';
   const loadWorkspaceRef = useRef(loadWorkspace);
