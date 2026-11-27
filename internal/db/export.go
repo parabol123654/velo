@@ -126,25 +126,60 @@ func (s *Store) ImportProjectJSON(actorID string, b *ExportBundle) (*Project, er
 	if b == nil || b.Project.Key == "" || b.Project.Name == "" {
 		return nil, fmt.Errorf("%w: invalid export bundle", ErrValidation)
 	}
-	// Check issue labels before creating anything: import is not one
-	// transaction, and CreateIssue refuses unknown labels.
+	// Check labels and states before creating anything: import is not one
+	// transaction, and CreateIssue refuses unknown ones. Names match with
+	// foldKey, so "LỖI" finds "lỗi"; CreateIssue's own SQLite NOCASE match
+	// folds ASCII only, so issues get label and state IDs below.
 	known := map[string]bool{}
 	for _, l := range defaultLabels {
-		known[strings.ToLower(l.name)] = true
+		known[foldKey(l.name)] = true
 	}
 	for _, l := range b.Labels {
-		known[strings.ToLower(l.Name)] = true
+		if foldKey(l.Name) == "" {
+			return nil, fmt.Errorf("%w: the bundle has a label with no name", ErrValidation)
+		}
+		known[foldKey(l.Name)] = true
 	}
 	var missing []string
 	for _, ei := range b.Issues {
 		for _, name := range ei.Labels {
-			if !known[strings.ToLower(name)] {
+			if !known[foldKey(name)] {
 				missing = append(missing, ei.Identifier+": "+strconv.Quote(name))
 			}
 		}
 	}
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("%w: issues use labels the bundle does not define: %s", ErrValidation, strings.Join(missing, ", "))
+	}
+	// A new project has the default states. A bundle state with a default's
+	// name sets that state's category, color and position; the others are
+	// created. Of two bundle states with the same name, the first counts.
+	stateKnown := map[string]bool{}
+	for _, st := range defaultStates {
+		stateKnown[foldKey(st.name)] = true
+	}
+	var bundleStates []WorkflowState
+	seenState := map[string]bool{}
+	for _, st := range b.States {
+		name := strings.TrimSpace(st.Name)
+		switch {
+		case name == "":
+			return nil, fmt.Errorf("%w: the bundle has a state with no name", ErrValidation)
+		case !validStateCategories[st.Category]:
+			return nil, fmt.Errorf("%w: state %q has an unknown category %q", ErrValidation, name, st.Category)
+		case !seenState[foldKey(name)]:
+			seenState[foldKey(name)] = true
+			stateKnown[foldKey(name)] = true
+			bundleStates = append(bundleStates, st)
+		}
+	}
+	for _, ei := range b.Issues {
+		if name := strings.TrimSpace(ei.StateName); name != "" && !stateKnown[foldKey(name)] {
+			missing = append(missing, ei.Identifier+": "+strconv.Quote(ei.StateName))
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("%w: issues use states the bundle does not define: %s", ErrValidation, strings.Join(missing, ", "))
 	}
 	inBundle := map[string]bool{}
 	for _, ei := range b.Issues {
@@ -187,8 +222,46 @@ func (s *Store) ImportProjectJSON(actorID string, b *ExportBundle) (*Project, er
 		return nil, err
 	}
 
+	states, err := s.ListWorkflowStates(proj.ID)
+	if err != nil {
+		return nil, err
+	}
+	stateByName := map[string]string{} // foldKey(name) -> state ID
+	for _, st := range states {
+		stateByName[foldKey(st.Name)] = st.ID
+	}
+	for _, st := range bundleStates {
+		if id, ok := stateByName[foldKey(st.Name)]; ok {
+			var pos *float64
+			if st.Position > 0 {
+				pos = &st.Position
+			}
+			if _, err := s.UpdateWorkflowState(id, "", st.Category, st.Color, pos); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		created, err := s.CreateWorkflowState(proj.ID, strings.TrimSpace(st.Name), st.Category, st.Color, st.Position)
+		if err != nil {
+			return nil, err
+		}
+		stateByName[foldKey(created.Name)] = created.ID
+	}
+	labels, err := s.ListLabels(proj.ID)
+	if err != nil {
+		return nil, err
+	}
+	labelByName := map[string]string{} // foldKey(name) -> label ID
+	for _, l := range labels {
+		labelByName[foldKey(l.Name)] = l.ID
+	}
 	for _, l := range b.Labels {
-		_, _ = s.CreateLabel(proj.ID, l.Name, l.Color)
+		if _, ok := labelByName[foldKey(l.Name)]; ok {
+			continue
+		}
+		if created, err := s.CreateLabel(proj.ID, l.Name, l.Color); err == nil {
+			labelByName[foldKey(created.Name)] = created.ID
+		}
 	}
 	cycleByName := map[string]string{}
 	for _, c := range b.Cycles {
@@ -200,14 +273,20 @@ func (s *Store) ImportProjectJSON(actorID string, b *ExportBundle) (*Project, er
 
 	identMap := map[string]string{} // old identifier -> new identifier
 	for _, ei := range b.Issues {
+		var labelIDs []string
+		for _, name := range ei.Labels {
+			if id := labelByName[foldKey(name)]; !slices.Contains(labelIDs, id) {
+				labelIDs = append(labelIDs, id)
+			}
+		}
 		iss, err := s.CreateIssue(actorID, CreateIssueInput{
 			ProjectRef:  proj.ID,
 			Title:       ei.Title,
 			Description: ei.Description,
-			StateID:     ei.StateName,
+			StateID:     stateByName[foldKey(ei.StateName)],
 			Priority:    ei.Priority,
 			CycleID:     cycleByName[strings.ToLower(ei.CycleName)],
-			LabelIDs:    ei.Labels,
+			LabelIDs:    labelIDs,
 		})
 		if err != nil {
 			return nil, err
@@ -237,6 +316,11 @@ func (s *Store) ImportProjectJSON(actorID string, b *ExportBundle) (*Project, er
 	}
 	return s.GetProject(proj.ID)
 }
+
+// foldKey is a name for comparing ignoring case, Unicode included: upper
+// then lower case, so "ΤΈΛΟΣ" and "Τέλος" (final sigma) match, as do "LỖI"
+// and "lỗi".
+func foldKey(s string) string { return strings.ToLower(strings.ToUpper(strings.TrimSpace(s))) }
 
 // projectLinks lists a project's links in stored form, by identifier.
 func (s *Store) projectLinks(projectID string) ([]ExportLink, error) {
